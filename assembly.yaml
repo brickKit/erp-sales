@@ -1,0 +1,53 @@
+id: erp/sales                        # 必须与 component.yaml 一致，be-ops 校验
+version: 1.0.0
+
+asset:
+  source_type: open_standard
+  assembly_role: default
+  contract_lock: strict
+  customization_guide: |
+    定价规则、审批流程或订单状态机超出标准版时：
+    1. 主管理员在客户电脑本地复制本目录为定制目录（如 erp-sales-acme），改 git remote。
+    2. 用 AI 在 backend/ 生成定制业务代码。
+    3. 严禁对 contracts/ 做破坏性变更；只允许在末尾追加新字段、使用新 Tag 编号——
+       阶段三的 crm-opportunity、各类 BFF 都会消费这份契约（§3.4 铁律 3）。
+    4. 把定制目录声明成 local 安装源并排在标准源前面（§3.4.1 遮蔽机制）。
+    ⚠️ metadata.id 与 version 一个字都不能改——改了所有依赖方的
+       ERP_SALES_ENDPOINT 会整个消失。
+
+    ⚠️ 设计计划 §8 指出预留严格度/缺货策略/开票基准/定价引擎形态四处
+    "多种实现都合理"的分歧，但**都不能做成 slot**——本组件将来必然被
+    crm-*/BFF 依赖，四条只能走 customer_fork 或组件内部策略（SOP-P）。
+
+domain: erp
+tier: backend
+
+edge_routes:
+  - { path: /erp/sales/**, auth: required }
+
+menus:
+  - { key: erp.sales, title: 销售管理, permission: erp.sales.view }
+
+data:
+  schema: erp_sales                   # registry/schemas.tsv
+  role:   erp_sales_rw                # 只用于 SET LOCAL ROLE，从不登录，因此不进 brickkit.yaml
+
+# org（dept_path 前缀）+ owner（owner_id 相等）两维（设计书 §14.2.2）：
+# "我的订单"和"本部门及下级的订单"是销售组织最基本的两个视图。
+#
+# ⚠️ 本组件是全系统第一个真的需要 §11.2.1 那三列（dept_id/dept_path/
+# owner_id）的组件，而且要建在分区表 sales_orders 上——分区表回头加列
+# 的代价比建表时多两个数量级，现在加几乎零成本。dept_id/dept_path 是
+# **创建时快照**，不是运行时查"这个人现在在哪个部门"（§11.2.1 明文）。
+data_scopes:
+  - { dimension: org,   column: dept_path, mode: prefix, tables: [sales_orders] }
+  - { dimension: owner, column: owner_id,  mode: equals, tables: [sales_orders] }
+
+permissions:
+  - { key: erp.sales.view,    title: 查看销售订单, type: page   }
+  - { key: erp.sales.create,  title: 建立报价/订单, type: action }
+  - { key: erp.sales.confirm, title: 确认订单,     type: action }
+  - { key: erp.sales.cancel,  title: 取消订单,     type: action }
+  - { key: erp.sales.ship,    title: 发货,         type: action }
+
+shell: go-core                       # 合并部署时进外壳一（§13.2）

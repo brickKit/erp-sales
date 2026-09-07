@@ -1,0 +1,79 @@
+apiVersion: brickkit/v1
+kind: Component
+
+metadata:
+  id: erp/sales                      # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
+  name: 销售管理
+  version: 1.0.0                     # 精确版本，不接受 ^ / ~ / latest
+  description: 销售报价与订单生命周期、定价、TCC 补偿编排——唯一的链上一环
+  license: Apache-2.0
+  vendor: brickKit
+
+tags: [erp, sales, order]
+
+artifacts:
+  - type: api-contract
+    format: protobuf
+    files:
+      - contracts/erp/sales/v1/sales.proto
+      - contracts/events/sales.events.json
+  - type: api-contract
+    format: openapi
+    files: [contracts/sales.openapi.yaml]
+  - type: metadata                   # ← assembly.yaml 靠这一条随组件分发（§3.5）
+    files: [assembly.yaml]
+
+# ⚠️ 本组件是阶段二**唯一**一个 dependencies.components 不是空数组的
+# 组件——四条强依赖边全在它身上（设计计划 §5、§6）：两个 mdm 只读枢纽
+# + erp/inventory（物理命令枢纽）+ erp/finance（事件汇枢纽）。
+#
+# infra/workflow 是弱依赖：阶段二它根本不存在（阶段三才建），缺失时
+# 平台**不注入** INFRA_WORKFLOW_ENDPOINT 这个变量——不是空串，是键根本
+# 不存在（总纲 §3.6）。本组件必须用 besdk.Endpoint() 的二值返回判断，
+# ok == false 就跳过建待办、只打日志。这条弱依赖同时是平台验收用例 5
+# 的天然测试场景（设计计划 §5）。
+dependencies:
+  components:
+    - mdm/customer@1.0.0
+    - mdm/product@1.0.0
+    - erp/inventory@1.0.0
+    - erp/finance@1.0.0
+    - { id: infra/workflow@1.0.0, optional: true }
+  resources:
+    # ⚠️ engine 逐字参与匹配（设计书 §2.7.3.1）：这里写的词必须与
+    #    brickkit.yaml 的 resources[].engine 完全相同，平台不认别名。
+    - { kind: database, engine: postgresql }   # 产品名：不在替换范围
+    - { kind: mq,       engine: nats }         # 产品名：换 Kafka 是一次迁移，要让平台阻断
+
+configSchema:
+  type: object
+  properties:
+    pgSchema:                        # ⚠️ 不能叫 databaseSchema，DATABASE_ 是保留前缀
+      type: string
+      default: erp_sales
+    iamJwksUrl:                      # JWT 本地验签的公钥来源。不对 IAM 建依赖边（决策 87）
+      type: string
+    otelBaseUrl:                     # ⚠️ 不能叫 otelEndpoint，*_ENDPOINT 是保留后缀
+      type: string
+      default: ""                    # 空 → Blackhole Exporter，零成本（§7.5）
+
+deployment:
+  type: container
+  image: brickenterprise/erp-sales:1.0.0
+  port: 8084                         # 端口册 registry/ports.tsv
+  extraPorts:
+    - { name: grpc, port: 9094 }     # → ERP_SALES_GRPC_ENDPOINT（值仍以 http:// 开头）
+  labels:                            # 平台只搬运，不解释键值。值必须是字符串
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8084"
+    prometheus.io/path: "/metrics"
+  resources:
+    requests: { cpu: "200m", memory: "256Mi" }  # 唯一的链上一环，TCC 编排比枢纽重一档
+
+migration:
+  command: ["./migrate", "up"]
+
+healthCheck:
+  type: http
+  path: /healthz                     # ⚠️ 只查本进程存活，严禁查库或查依赖组件（§12.3.6）
+  # startPeriodSeconds 不写：默认就是 60，Go 组件够用（§12.3.5）

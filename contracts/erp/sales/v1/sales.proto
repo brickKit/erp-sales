@@ -1,0 +1,173 @@
+syntax = "proto3";
+
+package erp.sales.v1;
+
+option go_package = "github.com/brickKit/erp-sales/gen/erp/sales/v1;salesv1";
+
+import "google/protobuf/timestamp.proto";
+
+// 销售服务。本组件是阶段二**唯一的链上一环**（设计计划 §6）：四条强
+// 依赖边全在它身上（mdm/customer、mdm/product、erp/inventory、
+// erp/finance），零入边。dependencies.components 因此**不是空数组**
+// ——这是本阶段唯一一个如此的组件。
+service SalesService {
+  // ── 命令 ──
+  // CreateOrder 建 DRAFT（报价），⚠️ 不预留库存——预留发生在 ConfirmOrder
+  // 的 TCC 链里（设计计划 §3.1）。
+  rpc CreateOrder (CreateOrderRequest)  returns (CreateOrderResponse);
+  // ConfirmOrder 是本阶段最难的一段代码：校验客户/产品 → 本地信用额度
+  // 预判 → Reserve 库存 → 建单+发事件，失败按情形分别处理或补偿。
+  rpc ConfirmOrder(ConfirmOrderRequest) returns (ConfirmOrderResponse);
+  rpc CancelOrder (CancelOrderRequest)  returns (CancelOrderResponse);
+  // ShipOrder 预留转实际出库（调 erp-inventory 的 ConfirmIssue）。
+  rpc ShipOrder   (ShipOrderRequest)    returns (ShipOrderResponse);
+
+  // CalculatePriceDryRun 是纯函数、不落库——前端/BFF 严禁自己算钱
+  // （设计计划 §3.2、§8.4），只能调这个接口。
+  rpc CalculatePriceDryRun(CalculatePriceDryRunRequest) returns (CalculatePriceDryRunResponse);
+
+  // ── 读 ──
+  rpc GetOrder      (GetOrderRequest)      returns (Order);
+  rpc ListOrders    (ListOrdersRequest)    returns (ListOrdersResponse);
+  // BatchGetOrder 是防 N+1 的唯一合法调用方式（§3.8）。
+  rpc BatchGetOrder (BatchGetOrderRequest) returns (BatchGetOrderResponse);
+  // GetOrderStatus 给上游（阶段三的 crm-opportunity）防"薛定谔的超时"用
+  // （§4.5），本组件自己调 erp-inventory 时也是这个判据。
+  rpc GetOrderStatus(GetOrderStatusRequest) returns (GetOrderStatusResponse);
+}
+
+// ⚠️ CANCELLED 是终态，不能复活（设计计划 §2.1 决定 1）：取消订单时
+// 已经跨进程释放了库存预留，"复活"要重新 Reserve，而那时库存可能已经
+// 被别人占走。SUSPENDED 不在主状态机图里画出来，是异常态：权威额度
+// 超限或补偿连续失败 3 次时进入，需要人工介入（设计计划 §3.1、§4）。
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_DRAFT       = 1;
+  ORDER_STATUS_CONFIRMED   = 2;
+  ORDER_STATUS_SHIPPED     = 3;
+  ORDER_STATUS_COMPLETED   = 4; // 终态
+  ORDER_STATUS_CANCELLED   = 5; // 终态，不能复活
+  ORDER_STATUS_CLOSED      = 6; // 终态，人工关闭
+  ORDER_STATUS_SUSPENDED   = 7; // 异常态，人工介入
+}
+
+// OrderItem：订单行，**全部快照，不 join**（设计计划 §2.2）。product_id
+// 只作为追溯外键——产品数据在另一个进程另一个 schema 里，物理上 join
+// 不到，且产品改名不该重写历史订单。
+message OrderItem {
+  string product_id   = 1;
+  string product_sku   = 2; // 快照
+  string product_name  = 3; // 快照
+  string uom_id         = 4; // 快照
+  string qty            = 5; // decimal-as-string
+  string unit_price     = 6; // 快照，decimal-as-string
+  string discount       = 7; // 快照，0~1 的小数，如 "0.10" 表示九折
+  string tax_rate       = 8; // 快照，decimal-as-string
+  // subtotal 服务端算好直接给：qty * unit_price * (1 - discount)，
+  // 不让调用方自己算（同 §3.2 的"前端严禁自己算钱"判据）。
+  string subtotal        = 9;
+}
+
+// Order：订单头 + 行。dept_id/dept_path/owner_id 是**创建时快照**
+// （设计计划 §1 明文：不是运行时查"这个人现在在哪个部门"）。
+message Order {
+  string   id              = 1;
+  string   order_no        = 2; // 允许有缺口（设计计划 §9 第 3 条），不是 post_no
+  string   customer_id     = 3;
+  string   customer_name   = 4; // 快照
+  OrderStatus status        = 5;
+  repeated OrderItem items  = 6;
+  string   total_amount     = 7; // decimal-as-string
+  string   dept_id          = 8;
+  string   dept_path        = 9;
+  string   owner_id         = 10;
+  // reservation_id 是 erp-inventory 的 Reserve 返回值，ConfirmOrder
+  // 成功后才有值——CancelOrder/ShipOrder 靠它去调库存那边的接口。
+  string   reservation_id   = 11;
+  int64    version          = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+}
+
+message CreateOrderItemInput {
+  string product_id = 1;
+  string qty         = 2;
+}
+
+message CreateOrderRequest {
+  // ⚠️ 所有跨组件写操作接口必须基于业务单号实现严格幂等（§4.6）。
+  string idempotency_key            = 1;
+  string customer_id                 = 2;
+  repeated CreateOrderItemInput items = 3;
+}
+message CreateOrderResponse { Order order = 1; }
+
+message ConfirmOrderRequest {
+  string idempotency_key = 1;
+  string order_id         = 2;
+}
+message ConfirmOrderResponse { Order order = 1; }
+
+message CancelOrderRequest {
+  string idempotency_key = 1;
+  string order_id         = 2;
+  string reason            = 3;
+}
+message CancelOrderResponse { Order order = 1; }
+
+message ShipOrderRequest {
+  string idempotency_key = 1;
+  string order_id         = 2;
+}
+message ShipOrderResponse { Order order = 1; }
+
+message PriceDryRunItem {
+  string product_id = 1;
+  string qty         = 2;
+}
+message CalculatePriceDryRunRequest {
+  string customer_id            = 1;
+  repeated PriceDryRunItem items = 2;
+}
+message PriceDryRunResultItem {
+  string product_id  = 1;
+  string unit_price   = 2;
+  string discount     = 3;
+  string tax_rate     = 4;
+  string subtotal     = 5;
+}
+message CalculatePriceDryRunResponse {
+  repeated PriceDryRunResultItem items = 1;
+  string total_amount                   = 2;
+}
+
+message GetOrderRequest { string id = 1; }
+
+message ListOrdersRequest {
+  // ⚠️ 禁止深 Offset，强制 Cursor Pagination（决策 53）
+  string cursor          = 1;
+  int32  page_size        = 2;
+  string customer_id      = 3;
+  OrderStatus status_filter = 4;
+  google.protobuf.Timestamp created_after  = 5;
+  google.protobuf.Timestamp created_before = 6;
+}
+message ListOrdersResponse {
+  repeated Order orders = 1;
+  string   next_cursor   = 2;
+}
+
+message BatchGetOrderRequest { repeated string ids = 1; }
+message BatchGetOrderResponse {
+  // 只返回找到的。缺失的 id 不报错——由调用方自己判断（同
+  // mdm-product 的 BatchGet 判据）。
+  repeated Order orders       = 1;
+  repeated string missing_ids = 2;
+}
+
+message GetOrderStatusRequest { string order_id = 1; }
+message GetOrderStatusResponse {
+  // ⚠️ UNSPECIFIED 就是 NOT_FOUND 的信号，不是"忘了填"（同
+  // erp-inventory 的 GetReservationStatus 判据）。
+  OrderStatus status = 1;
+}

@@ -71,6 +71,7 @@
 | 补偿失败时无限重试 | "补偿的补偿"死循环比不补偿更糟。连续失败 3 次必须标 `SUSPENDED` + 告警，阶段二只打日志不接 workflow | 设计计划 §3.1、§4.4.4 |
 | 弱依赖 `infra/workflow` 缺失时把它的 endpoint 当空字符串处理 | 平台对缺失的弱依赖**不注入这个变量**，不是空串——下标/字符串比较判空会得到错误结论。必须用 `besdk.Endpoint()` 的二值返回判 `ok` | 设计计划 §5、总纲 §3.6 |
 | 给 `dependencies.components` 加 `crm-*` 或任何非四条强依赖之外的边 | CRM 与 ERP 零同步边是硬铁律，阶段三的赢单转订单走事件 | §1.4 铁律、设计计划 §5 |
+| 写弱依赖 `infra/workflow` 时省略 `@版本号`（想着"反正它还不存在，写个版本也没意义"） | `brickkit up`/生成阶段直接报 `MANIFEST_INVALID`：**弱依赖照样要求 `id@精确版本` 的格式**，`optional: true` 只影响"解析不到时警告而不是报错"这个阶段，不影响"引用本身必须写成合法格式"这个更早的 schema 校验。真机跑 `brickkit up --dry-run` 才发现——补版本号（`infra/workflow@1.0.0`，跟其它组件的初版号一致）后警告降级为"弱依赖缺失"，不阻断 | Task 16 实测；brickKit `internal/manifest/parse.go` |
 
 ## 改代码前的自查
 
