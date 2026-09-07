@@ -1,13 +1,28 @@
 version: v2
 modules:
+  # 本组件自己的契约：STANDARD 全套规则，一个字都不放松。
   - path: contracts
-lint:
-  use:
-    - STANDARD
-  except:
-    # 读接口直接返回聚合根本身（如 rpc GetOrder returns (Order)），不强制包一层
-    # <RPC名>Response——这是本项目契约的一贯风格（设计计划 §3），不是疏漏。
-    - RPC_RESPONSE_STANDARD_NAME
-breaking:
-  use:
-    - FILE
+    excludes: [contracts/vendor]
+    lint:
+      use:
+        - STANDARD
+      except:
+        # 读接口直接返回聚合根本身（如 rpc GetOrder returns (Order)），不强制包一层
+        # <RPC名>Response——这是本项目契约的一贯风格（设计计划 §3），不是疏漏。
+        - RPC_RESPONSE_STANDARD_NAME
+    breaking:
+      use:
+        - FILE
+  # ⚠️ 依赖方契约的只读镜像（本组件是阶段二第一个真的跨组件调用的组件，
+  # 见 docs/design/erp-sales.md §9：铁律六不许 import 其他组件仓库的 Go
+  # 代码，这是"契约在 contracts/，代码不共享"落地到跨组件同步调用场景
+  # 的方式——本地 buf generate 出自己的客户端 stub，不 import 任何其他
+  # 组件仓库）。这些文件不是本组件的契约，只放最基础的语法检查，不对它们
+  # 的目录结构较真——PACKAGE_DIRECTORY_MATCH 要求目录匹配包名，但这里
+  # 故意多一层 vendor/ 前缀来标记"这是镜像不是本组件的契约"。
+  - path: contracts/vendor
+    lint:
+      use:
+        - MINIMAL
+      except:
+        - PACKAGE_DIRECTORY_MATCH

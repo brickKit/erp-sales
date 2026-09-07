@@ -36,7 +36,7 @@ dependencies:
   components:
     - mdm/customer@1.0.0
     - mdm/product@1.0.0
-    - erp/inventory@1.0.0
+    - erp/inventory@1.0.2
     - erp/finance@1.0.0
     - { id: infra/workflow@1.0.0, optional: true }
   resources:
@@ -56,6 +56,14 @@ configSchema:
     otelBaseUrl:                     # ⚠️ 不能叫 otelEndpoint，*_ENDPOINT 是保留后缀
       type: string
       default: ""                    # 空 → Blackhole Exporter，零成本（§7.5）
+    defaultWarehouseId:              # ConfirmOrder 发起 Reserve 时统一用这一个仓库
+      type: string                   # 必填，无默认值——阶段二没有多仓选货逻辑（设计计划 §9 第 9 条）
+  # ⚠️ required 让缺失在 brickkit up --dry-run 生成阶段就报错（004 §3.5
+  # 关键规则：required 又没给 default 的项，装配仓库不写就直接拦下），
+  # 而不是留到容器启动那一刻才靠 rt.Config.MustString panic——同一个
+  # "缺配置该多早失败"的判据，能在生成阶段拦住就不要留到运行时。
+  required: [defaultWarehouseId]
+
 
 deployment:
   type: container
