@@ -4,7 +4,7 @@ kind: Component
 metadata:
   id: erp/sales                      # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
   name: 销售管理
-  version: 1.0.1                     # 精确版本，不接受 ^ / ~ / latest
+  version: 1.0.2                     # 精确版本，不接受 ^ / ~ / latest
   description: 销售报价与订单生命周期、定价、TCC 补偿编排——唯一的链上一环
   license: Apache-2.0
   vendor: brickKit
@@ -34,9 +34,9 @@ artifacts:
 # 的天然测试场景（设计计划 §5）。
 dependencies:
   components:
-    - mdm/customer@1.0.0
-    - mdm/product@1.0.0
-    - erp/inventory@1.0.2
+    - mdm/customer@1.0.1
+    - mdm/product@1.0.1
+    - erp/inventory@1.0.3
     - erp/finance@1.0.1
     - { id: infra/workflow@1.0.0, optional: true }
   resources:
