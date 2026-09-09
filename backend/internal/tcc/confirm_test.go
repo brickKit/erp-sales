@@ -29,7 +29,6 @@ import (
 	"github.com/brickKit/erp-sales/backend/internal/client"
 	"github.com/brickKit/erp-sales/backend/internal/repo"
 
-	inventoryv1 "github.com/brickKit/erp-sales/gen/erp/inventory/v1"
 	workflowv1 "github.com/brickKit/erp-sales/gen/infra/workflow/v1"
 	customerv1 "github.com/brickKit/erp-sales/gen/mdm/customer/v1"
 	productv1 "github.com/brickKit/erp-sales/gen/mdm/product/v1"
@@ -108,39 +107,98 @@ func createRealProduct(t *testing.T, ctx context.Context) string {
 	return resp.Product.Id
 }
 
-// receiveRealStock 在真的 erp-inventory 里给 productID 入库 qty 件。
-func receiveRealStock(t *testing.T, ctx context.Context, productID, qty string) {
+// receiveRealStock/getRealBalance 曾经走 gRPC 直连 erp-inventory 的
+// Receive/GetBalance——但这两个方法是 REST-only（人工操作，见
+// erp-inventory AGENTS.md），被 gRPC 调用时 ctx 里没有经过
+// RequirePermission 验签的 Claims，service 层的 allowedWarehouseIDs
+// 会在 besdk.ScopeOf 这一步 panic（本仓库真机测试真的复现过：
+// docs/dev/实测踩坑记录.md C11，be-sdk-go v0.2.4 之前这个 panic 会
+// 一路崩掉整个 erp-inventory 容器进程；v0.2.4 修复后 panic 被拦截器
+// 兜住，改成干净返回 codes.Internal，但这两个方法依然不是合法的调用
+// 路径，调用仍然会失败）。
+//
+// 这条测试文件要验证的是 ConfirmOrder 的 TCC 编排本身——Reserve/
+// CancelReservation/ConfirmIssue/GetReservationStatus 才是组件间 gRPC
+// 协议里合法的四个方法（不调 allowedWarehouseIDs），Receive/GetBalance
+// 在这里只是"造一批真实库存数据供后续真实 Reserve 调用去读写"与"读回
+// 真实结果做断言"这两个不需要经过鉴权的辅助步骤。改成直接对
+// erp-inventory 的真实 Postgres schema 读写——同 erp-inventory 自己
+// Receive 实现完全一样的两条 SQL（先 INSERT ... ON CONFLICT DO
+// NOTHING 保证行存在，再条件 UPDATE 累加），只是跳过它的 gRPC/REST
+// 接口层，直接达成一样的最终数据状态，供随后真实的 Reserve/
+// CancelReservation/ConfirmIssue 调用去读写、验证。⚠️ 这不是"接口共享"
+// ——besdk.WithTx 是本项目唯一被批准跨组件复用的 SDK 函数，本身不认识
+// erp-inventory 的表结构，role/schema 参数换成 erp-inventory 自己的
+// 只是复用同一套"SET LOCAL ROLE + search_path"机制，这两个组件依然是
+// 各自独立的进程、各自独立的代码，erp-sales 从未 import 过 erp-inventory
+// 的任何 Go 包（同 repo.go 里其余测试直接写 erp_sales 自己 schema 的
+// 既有判据，这里只是把 schema/role 换成了 erp_inventory）。
+func receiveRealStock(t *testing.T, ctx context.Context, db *sql.DB, productID, qty string) {
 	t.Helper()
-	conn, closeConn, err := client.Inventory(ctx)
-	if err != nil {
-		t.Fatalf("拨号 erp-inventory 失败: %v", err)
-	}
-	defer closeConn()
-	_, err = conn.Receive(ctx, &inventoryv1.ReceiveRequest{
-		IdempotencyKey: uniqueSuffix("test-receive"), ProductId: productID, WarehouseId: testWarehouseID, Qty: qty,
+	err := besdk.WithTx(ctx, db, "erp_inventory_rw", "erp_inventory", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO inventory_balances (product_id, warehouse_id, on_hand_qty)
+			VALUES ($1, $2, 0) ON CONFLICT (product_id, warehouse_id) DO NOTHING`,
+			productID, testWarehouseID); err != nil {
+			return fmt.Errorf("建余额行: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE inventory_balances SET on_hand_qty = on_hand_qty + $1, version = version + 1, updated_at = now()
+			WHERE product_id = $2 AND warehouse_id = $3`,
+			qty, productID, testWarehouseID); err != nil {
+			return fmt.Errorf("累加 on_hand_qty: %w", err)
+		}
+		return nil
 	})
 	if err != nil {
-		t.Fatalf("erp-inventory.Receive 失败: %v", err)
+		t.Fatalf("直接写入 erp_inventory.inventory_balances 失败: %v", err)
 	}
 }
 
-// getRealBalance 查真的 erp-inventory 里 productID 在测试仓库的余额。
-func getRealBalance(t *testing.T, ctx context.Context, productID string) *inventoryv1.Balance {
+// getRealBalance 查真的 erp-inventory 里 productID 在测试仓库的余额——
+// 见 receiveRealStock 的注释：直接读它自己的表，不经过 REST-only 的
+// GetBalance 方法。返回值特意保持跟原来的 gRPC Balance 消息一样的字段
+// 名（OnHandQty/ReservedQty），调用方（happy_path 等测试）不需要跟着改。
+type realBalance struct {
+	OnHandQty   string
+	ReservedQty string
+}
+
+func getRealBalance(t *testing.T, ctx context.Context, db *sql.DB, productID string) realBalance {
 	t.Helper()
-	conn, closeConn, err := client.Inventory(ctx)
-	if err != nil {
-		t.Fatalf("拨号 erp-inventory 失败: %v", err)
+	var b realBalance
+	err := besdk.WithTx(ctx, db, "erp_inventory_rw", "erp_inventory", func(tx *sql.Tx) error {
+		row := tx.QueryRowContext(ctx, `
+			SELECT on_hand_qty::text, reserved_qty::text FROM inventory_balances
+			WHERE product_id = $1 AND warehouse_id = $2`, productID, testWarehouseID)
+		return row.Scan(&b.OnHandQty, &b.ReservedQty)
+	})
+	if err == sql.ErrNoRows {
+		return realBalance{OnHandQty: "0", ReservedQty: "0"} // 同 GetBalance 原来的"查不到就是 0"语义
 	}
-	defer closeConn()
-	b, err := conn.GetBalance(ctx, &inventoryv1.GetBalanceRequest{ProductId: productID, WarehouseId: testWarehouseID})
 	if err != nil {
-		t.Fatalf("erp-inventory.GetBalance 失败: %v", err)
+		t.Fatalf("直接查 erp_inventory.inventory_balances 失败: %v", err)
 	}
 	return b
 }
 
 func newTestOrchestrator(db *sql.DB, timeout time.Duration) *Orchestrator {
 	return New(repo.New(db, "erp_sales_rw", "erp_sales"), testWarehouseID, timeout, "")
+}
+
+// e2eTestCtx 给"真的调 orch.CreateOrder"这条链路的测试造一个带 Claims 的
+// ctx——tcc.CreateOrder 会调 besdk.ScopeOf(ctx) 取 dept_path/owner_id
+// 做订单创建时快照（阶段三 Task 6，create.go 的既有注释），这些真故障
+// 注入测试直接调 orchestrator 层（跳过 REST/gRPC 入口本该经过的
+// RequirePermission），ctx 里从一开始就没有 Claims，ScopeOf 会 panic
+// ——同 service_test.go 的 authedCtx 是同一个判据（那边测 service 层，
+// 这里测 tcc 层，两处都是 _test.go，不构成需要提公共包的重复）。
+// ⚠️ 这不影响同一个 ctx 上继续走 client.Customer/client.Product/
+// client.Inventory 这几个 UserClient 调用——它们读的是 gRPC metadata
+// （真实转发 Authorization），跟 besdk.ContextWithClaims 用的
+// context.WithValue 是两条完全独立的机制，互不干扰。
+func e2eTestCtx() context.Context {
+	return besdk.ContextWithClaims(context.Background(), besdk.Claims{Sub: "u_e2e_test_owner", DeptPath: "/1/12/"})
 }
 
 // seedCustomerSnapshot 直接写 customer_snapshots，模拟"mdm.customer.created.v1
@@ -175,15 +233,15 @@ func createDraftOrder(t *testing.T, ctx context.Context, orch *Orchestrator, cus
 func TestConfirmOrder_真实happy_path(t *testing.T) {
 	requireE2EEnv(t)
 	db := testDB(t)
-	ctx := context.Background()
+	ctx := e2eTestCtx()
 	orch := newTestOrchestrator(db, 5*time.Second)
 
 	customerID := createRealCustomer(t, ctx, "100000.00")
 	seedCustomerSnapshot(t, db, customerID, "100000.00")
 	productID := createRealProduct(t, ctx)
-	receiveRealStock(t, ctx, productID, "50")
+	receiveRealStock(t, ctx, db, productID, "50")
 
-	before := getRealBalance(t, ctx, productID)
+	before := getRealBalance(t, ctx, db, productID)
 
 	order := createDraftOrder(t, ctx, orch, customerID, productID, "3")
 	confirmed, err := orch.ConfirmOrder(ctx, order.ID, uniqueSuffix("test-confirm"), slog.Default())
@@ -198,7 +256,7 @@ func TestConfirmOrder_真实happy_path(t *testing.T) {
 	}
 
 	// 断言库存真的被占住了——不是订单侧自己说了算，查依赖组件的真实状态。
-	after := getRealBalance(t, ctx, productID)
+	after := getRealBalance(t, ctx, db, productID)
 	beforeReserved, _ := strconv.ParseFloat(before.ReservedQty, 64)
 	afterReserved, _ := strconv.ParseFloat(after.ReservedQty, 64)
 	if afterReserved-beforeReserved != 3 {
@@ -214,7 +272,7 @@ func TestConfirmOrder_真实happy_path(t *testing.T) {
 func TestConfirmOrder_真实库存不足(t *testing.T) {
 	requireE2EEnv(t)
 	db := testDB(t)
-	ctx := context.Background()
+	ctx := e2eTestCtx()
 	orch := newTestOrchestrator(db, 5*time.Second)
 
 	customerID := createRealCustomer(t, ctx, "100000.00")
@@ -224,9 +282,9 @@ func TestConfirmOrder_真实库存不足(t *testing.T) {
 	// 错误的原因通过（同 happy_path 测试踩过的同一个坑）。
 	seedCustomerSnapshot(t, db, customerID, "100000.00")
 	productID := createRealProduct(t, ctx)
-	receiveRealStock(t, ctx, productID, "2") // 只入 2 件
+	receiveRealStock(t, ctx, db, productID, "2") // 只入 2 件
 
-	before := getRealBalance(t, ctx, productID)
+	before := getRealBalance(t, ctx, db, productID)
 
 	order := createDraftOrder(t, ctx, orch, customerID, productID, "999") // 要 999 件，明显不够
 	_, err := orch.ConfirmOrder(ctx, order.ID, uniqueSuffix("test-confirm-insufficient"), slog.Default())
@@ -251,7 +309,7 @@ func TestConfirmOrder_真实库存不足(t *testing.T) {
 
 	// 库存确实没被占住——Reserve 请求整个失败，erp-inventory 自己的条件
 	// 更新连一件都不会加（设计计划 §2.2：判定与加锁是同一条语句）。
-	after := getRealBalance(t, ctx, productID)
+	after := getRealBalance(t, ctx, db, productID)
 	if after.ReservedQty != before.ReservedQty {
 		t.Fatalf("库存不足的 Reserve 不该留下任何占用，before=%s after=%s", before.ReservedQty, after.ReservedQty)
 	}
@@ -279,7 +337,7 @@ func TestResolveAfterTimeout_真实查到RESERVED(t *testing.T) {
 	ctx := context.Background()
 
 	productID := createRealProduct(t, ctx)
-	receiveRealStock(t, ctx, productID, "20")
+	receiveRealStock(t, ctx, db, productID, "20")
 
 	orchNormal := newTestOrchestrator(db, 5*time.Second)
 	invConn, closeInv, err := client.Inventory(ctx)
@@ -328,7 +386,7 @@ func TestReserve_真实超时能自我恢复不panic不出假结果(t *testing.T
 	ctx := context.Background()
 
 	productID := createRealProduct(t, ctx)
-	receiveRealStock(t, ctx, productID, "20")
+	receiveRealStock(t, ctx, db, productID, "20")
 
 	invConn, closeInv, err := client.Inventory(ctx)
 	if err != nil {
@@ -418,8 +476,8 @@ func TestCompensateReserve_真实释放预留且累加补偿计数(t *testing.T)
 	r := repo.New(db, "erp_sales_rw", "erp_sales")
 
 	productID := createRealProduct(t, ctx)
-	receiveRealStock(t, ctx, productID, "20")
-	before := getRealBalance(t, ctx, productID)
+	receiveRealStock(t, ctx, db, productID, "20")
+	before := getRealBalance(t, ctx, db, productID)
 
 	order, err := r.CreateOrder(ctx, repo.CreateOrderInput{
 		IdempotencyKey: uniqueSuffix("compensate-order"), CustomerID: "C-compensate", CustomerName: "补偿测试客户",
@@ -443,7 +501,7 @@ func TestCompensateReserve_真实释放预留且累加补偿计数(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	afterReserve := getRealBalance(t, ctx, productID)
+	afterReserve := getRealBalance(t, ctx, db, productID)
 	beforeReserved, _ := strconv.ParseFloat(before.ReservedQty, 64)
 	afterReserveReserved, _ := strconv.ParseFloat(afterReserve.ReservedQty, 64)
 	if afterReserveReserved-beforeReserved != 4 {
@@ -454,7 +512,7 @@ func TestCompensateReserve_真实释放预留且累加补偿计数(t *testing.T)
 	orch.compensateReserve(ctx, invConn, order.ID, uniqueSuffix("compensate-cancel"), reservationID, slog.Default())
 
 	// 断言库存真的被释放回去了——查依赖组件的真实余额。
-	after := getRealBalance(t, ctx, productID)
+	after := getRealBalance(t, ctx, db, productID)
 	afterReserved, _ := strconv.ParseFloat(after.ReservedQty, 64)
 	if afterReserved != beforeReserved {
 		t.Fatalf("补偿后 reserved_qty 应该回到补偿前的水平，期望 %v，实际 %v", beforeReserved, afterReserved)
