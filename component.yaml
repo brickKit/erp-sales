@@ -4,7 +4,7 @@ kind: Component
 metadata:
   id: erp/sales                      # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
   name: 销售管理
-  version: 1.0.5                     # 精确版本，不接受 ^ / ~ / latest
+  version: 1.0.6                     # 精确版本，不接受 ^ / ~ / latest
                                       # v1.0.3：纯重新构建，deployment.image 之前一直
                                       # 停在 1.0.1，v1.0.2 的源码改动从没真的打进镜像
                                       # 过（阶段三 Task 4 核对 brickkit up 真机时发现）；
@@ -14,7 +14,12 @@ metadata:
                                       # v1.0.4：erp/finance 的依赖版本号同步补到
                                       # 1.0.2（v1.0.3 那次漏了这一条，erp-finance 的
                                       # 修复晚一步才做完，brickkit up 真的解析成
-                                      # 两个版本节点才发现这个遗漏）
+                                      # 两个版本节点才发现这个遗漏）；
+                                      # v1.0.6：阶段三 Task 8 收尾——弱依赖 infra/workflow
+                                      # 从"声明但没接线"变成真的调用：补偿连续失败 3 次
+                                      # 调 CreateTask 建异常待办，消费 task.completed.v1
+                                      # 恢复订单（§4.4.4）。新增 exceptionAssigneeSub 配置项，
+                                      # 无破坏性变更
   description: 销售报价与订单生命周期、定价、TCC 补偿编排——唯一的链上一环
   license: Apache-2.0
   vendor: brickKit
@@ -72,6 +77,9 @@ configSchema:
       default: ""                    # 空 → Blackhole Exporter，零成本（§7.5）
     defaultWarehouseId:              # ConfirmOrder 发起 Reserve 时统一用这一个仓库
       type: string                   # 必填，无默认值——阶段二没有多仓选货逻辑（设计计划 §9 第 9 条）
+    exceptionAssigneeSub:            # 补偿连续失败 3 次时建的 infra-workflow exception
+      type: string                   # 待办分配给谁——本阶段没有 mdm-org，用配置项形式过
+      default: ""                    # （设计计划 §4.4.4）。留空 = 跳过建待办，只打日志
   # ⚠️ required 让缺失在 brickkit up --dry-run 生成阶段就报错（004 §3.5
   # 关键规则：required 又没给 default 的项，装配仓库不写就直接拦下），
   # 而不是留到容器启动那一刻才靠 rt.Config.MustString panic——同一个
@@ -81,7 +89,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/erp-sales:1.0.5
+  image: brickenterprise/erp-sales:1.0.6
   port: 8084                         # 端口册 registry/ports.tsv
   extraPorts:
     - { name: grpc, port: 9094 }     # → ERP_SALES_GRPC_ENDPOINT（值仍以 http:// 开头）

@@ -40,10 +40,19 @@ type Orchestrator struct {
 	Repo               *repo.Repo
 	DefaultWarehouseID string        // 设计计划 §9 第 9 条：阶段二没有多仓选货逻辑
 	ReserveTimeout     time.Duration // Reserve/GetReservationStatus 各自的超时（§4.5 的"掐短"）
+	// ExceptionAssigneeSub 是补偿连续失败时建的 exception 待办分配给谁——
+	// 本阶段没有 mdm-org，用最简单的配置项形式过（阶段三 Task 8 明文
+	// 要求，不要提前实现组织树路由，设计计划 §4.4.4）。留空表示这项
+	// 还没配置，跳过建待办只打日志（同 infra/workflow 弱依赖缺失的
+	// 判据——两个独立的"跳过"开关，见 confirm.go 的 maybeCreateExceptionTask）。
+	ExceptionAssigneeSub string
 }
 
-func New(r *repo.Repo, defaultWarehouseID string, reserveTimeout time.Duration) *Orchestrator {
-	return &Orchestrator{Repo: r, DefaultWarehouseID: defaultWarehouseID, ReserveTimeout: reserveTimeout}
+func New(r *repo.Repo, defaultWarehouseID string, reserveTimeout time.Duration, exceptionAssigneeSub string) *Orchestrator {
+	return &Orchestrator{
+		Repo: r, DefaultWarehouseID: defaultWarehouseID, ReserveTimeout: reserveTimeout,
+		ExceptionAssigneeSub: exceptionAssigneeSub,
+	}
 }
 
 // isDeadlineExceeded 判断一次 gRPC 调用是不是因为 ctx 超时/取消而失败——

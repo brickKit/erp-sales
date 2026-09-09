@@ -29,8 +29,9 @@ import (
 	"github.com/brickKit/erp-sales/backend/internal/client"
 	"github.com/brickKit/erp-sales/backend/internal/repo"
 
-	customerv1 "github.com/brickKit/erp-sales/gen/mdm/customer/v1"
 	inventoryv1 "github.com/brickKit/erp-sales/gen/erp/inventory/v1"
+	workflowv1 "github.com/brickKit/erp-sales/gen/infra/workflow/v1"
+	customerv1 "github.com/brickKit/erp-sales/gen/mdm/customer/v1"
 	productv1 "github.com/brickKit/erp-sales/gen/mdm/product/v1"
 )
 
@@ -139,7 +140,7 @@ func getRealBalance(t *testing.T, ctx context.Context, productID string) *invent
 }
 
 func newTestOrchestrator(db *sql.DB, timeout time.Duration) *Orchestrator {
-	return New(repo.New(db, "erp_sales_rw", "erp_sales"), testWarehouseID, timeout)
+	return New(repo.New(db, "erp_sales_rw", "erp_sales"), testWarehouseID, timeout, "")
 }
 
 // seedCustomerSnapshot 直接写 customer_snapshots，模拟"mdm.customer.created.v1
@@ -466,5 +467,174 @@ func TestCompensateReserve_真实释放预留且累加补偿计数(t *testing.T)
 	}
 	if reloaded.CompensationAttempts != 1 {
 		t.Fatalf("期望 compensation_attempts=1，实际 %d", reloaded.CompensationAttempts)
+	}
+}
+
+func requireWorkflowEnv(t *testing.T) {
+	t.Helper()
+	if _, ok := os.LookupEnv("INFRA_WORKFLOW_GRPC_ENDPOINT"); !ok {
+		t.Skip("未设置 INFRA_WORKFLOW_GRPC_ENDPOINT，跳过真故障注入测试（需要 infra-workflow 真的在跑）")
+	}
+}
+
+// TestCompensateReserve_连续失败3次真建异常待办 是阶段三 Task 8 的验证
+// 标准第一段的直接测试："erp-sales 的一笔订单补偿连续失败 3 次，真的在
+// infra-workflow 里出现一条异常待办"——真拨号 infra-workflow、真调
+// GetTaskStatus 查，不是断言"调用过某个 mock 函数"。第二段（处理这条
+// 待办后订单状态跟着变）由 consumer 包的
+// TestConsumer_补偿异常待办完成后恢复订单 覆盖——那一段不需要真的驱动
+// "人在 infra-workflow UI 里点同意"这个环节（需要真实 Casdoor 用户 +
+// 角色授权，超出这条测试要验的范围），直接验证 erp-sales 收到对应事件后
+// 的行为，两段合起来才是完整链路。
+//
+// ⚠️ 故意不走 createRealProduct/receiveRealStock/orch.reserve 这条真实
+// 预留链路——compensateReserve 要验的是"补偿动作本身"，不依赖 Reserve
+// 真的成功过；给一个不存在的 reservationID 直接调 compensateReserve，
+// CancelReservation 会干净地返回一个 NotFound 类错误（compensateReserve
+// 本来就把这类错误当"补偿失败"处理并继续累加计数，不影响本测试要验的
+// 行为）。这也刻意避开了 erp-inventory Receive/GetBalance 两个 REST-only
+// 端点——它们的 service 层调 besdk.ScopeOf(ctx)，走 gRPC 直连（ctx 里没有
+// Claims）会 panic 且 be-sdk-go 的 gRPC server 没有 panic-recovery
+// 拦截器，整个 erp-inventory 容器会崩溃（真机验证时发现的一个真实、
+// 独立于本次改动的平台级缺口，已记入 docs/dev/实测踩坑记录.md，不在
+// Task 8 范围内修——这里只是绕开，不是掩盖）。
+func TestCompensateReserve_连续失败3次真建异常待办(t *testing.T) {
+	requireE2EEnv(t)
+	requireWorkflowEnv(t)
+	db := testDB(t)
+	ctx := context.Background()
+	r := repo.New(db, "erp_sales_rw", "erp_sales")
+
+	order, err := r.CreateOrder(ctx, repo.CreateOrderInput{
+		IdempotencyKey: uniqueSuffix("exception-order"), CustomerID: "C-exception", CustomerName: "异常测试客户",
+		Items: []repo.CreateOrderItemInput{{ProductID: "P-exception", ProductSKU: "SKU", ProductName: "N", UOMID: "EA",
+			Qty: "4", UnitPrice: "1", Discount: "0", TaxRate: "0", Subtotal: "4"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	invConn, closeInv, err := client.Inventory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeInv()
+
+	assigneeSub := uniqueSuffix("reviewer")
+	orch := New(r, testWarehouseID, 5*time.Second, assigneeSub)
+
+	// 同一个 idempotencyKey 重复三次——模拟"同一个确认命令的重放，
+	// CancelReservation 幂等地返回同一个结果，但每次都真实累加补偿计数"
+	// （见 tcc.go 的既有幂等键判据）。reservationID 是一个不存在的占位值
+	// （见函数顶部注释——CancelReservation 是组件间 gRPC 协议的合法调用，
+	// 查不到只会干净地报错，不会 panic）。
+	idemKey := uniqueSuffix("exception-confirm")
+	reservationID := uniqueSuffix("fake-reservation")
+	for i := 0; i < 3; i++ {
+		orch.compensateReserve(ctx, invConn, order.ID, idemKey, reservationID, slog.Default())
+	}
+
+	reloaded, err := r.GetOrder(ctx, order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Status != repo.StatusSuspended {
+		t.Fatalf("期望 3 次失败后订单转 SUSPENDED，实际 %q", reloaded.Status)
+	}
+
+	// 真的查 infra-workflow：这条异常待办应该真实存在、是 PENDING、
+	// assignee 是我们配的 exceptionAssigneeSub。
+	wfConn, closeWf, err := client.Workflow(ctx)
+	if err != nil {
+		t.Fatalf("拨号 infra-workflow 失败: %v", err)
+	}
+	defer closeWf()
+
+	statusResp, err := wfConn.GetTaskStatus(ctx, &workflowv1.GetTaskStatusRequest{
+		IdempotencyKey: idemKey + ":exception-task",
+	})
+	if err != nil {
+		t.Fatalf("GetTaskStatus 失败: %v", err)
+	}
+	if statusResp.Status != workflowv1.TaskStatus_TASK_STATUS_PENDING {
+		t.Fatalf("期望异常待办是 PENDING，实际 %v", statusResp.Status)
+	}
+
+	tasks, err := wfConn.BatchGetTasks(ctx, &workflowv1.BatchGetTasksRequest{TaskIds: []string{statusResp.TaskId}})
+	if err != nil {
+		t.Fatalf("BatchGetTasks 失败: %v", err)
+	}
+	if len(tasks.Tasks) != 1 {
+		t.Fatalf("期望查到 1 条待办，实际 %d 条", len(tasks.Tasks))
+	}
+	task := tasks.Tasks[0]
+	if task.AssigneeSub != assigneeSub {
+		t.Fatalf("期望 assignee_sub=%q，实际 %q", assigneeSub, task.AssigneeSub)
+	}
+	if task.SourceComponent != "erp/sales" || task.SourceAggregate != "sales_order" || task.SourceId != order.ID {
+		t.Fatalf("来源四元组不对：%+v", task)
+	}
+	if task.Type != workflowv1.TaskType_TASK_TYPE_EXCEPTION {
+		t.Fatalf("期望 type=EXCEPTION，实际 %v", task.Type)
+	}
+}
+
+// TestCompensateReserve_未配置exceptionAssigneeSub时跳过建待办 验证两个
+// 独立"跳过"开关之一：本阶段没有 mdm-org，这项没配置时必须优雅跳过，
+// 不能报错阻断 ConfirmOrder 本身的补偿逻辑。
+func TestCompensateReserve_未配置exceptionAssigneeSub时跳过建待办(t *testing.T) {
+	requireE2EEnv(t)
+	requireWorkflowEnv(t)
+	db := testDB(t)
+	ctx := context.Background()
+	r := repo.New(db, "erp_sales_rw", "erp_sales")
+
+	// ⚠️ 同上一条测试的既有判据：不走真实预留链路，避开 erp-inventory
+	// Receive/GetBalance 两个 REST-only 端点走 gRPC 直连会 panic 崩容器
+	// 的真实平台缺口（已记入实测踩坑记录，本测试只是绕开，不是掩盖）。
+	order, err := r.CreateOrder(ctx, repo.CreateOrderInput{
+		IdempotencyKey: uniqueSuffix("noassignee-order"), CustomerID: "C-noassignee", CustomerName: "无审批人测试客户",
+		Items: []repo.CreateOrderItemInput{{ProductID: "P-noassignee", ProductSKU: "SKU", ProductName: "N", UOMID: "EA",
+			Qty: "4", UnitPrice: "1", Discount: "0", TaxRate: "0", Subtotal: "4"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	invConn, closeInv, err := client.Inventory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeInv()
+
+	// newTestOrchestrator 用的 exceptionAssigneeSub 是空字符串。
+	orch := newTestOrchestrator(db, 5*time.Second)
+	idemKey := uniqueSuffix("noassignee-confirm")
+	reservationID := uniqueSuffix("fake-reservation")
+	for i := 0; i < 3; i++ {
+		orch.compensateReserve(ctx, invConn, order.ID, idemKey, reservationID, slog.Default())
+	}
+
+	reloaded, err := r.GetOrder(ctx, order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Status != repo.StatusSuspended {
+		t.Fatalf("期望 3 次失败后订单仍然转 SUSPENDED（跳过建待办不该影响这一步），实际 %q", reloaded.Status)
+	}
+
+	wfConn, closeWf, err := client.Workflow(ctx)
+	if err != nil {
+		t.Fatalf("拨号 infra-workflow 失败: %v", err)
+	}
+	defer closeWf()
+	statusResp, err := wfConn.GetTaskStatus(ctx, &workflowv1.GetTaskStatusRequest{
+		IdempotencyKey: idemKey + ":exception-task",
+	})
+	if err != nil {
+		t.Fatalf("GetTaskStatus 失败: %v", err)
+	}
+	if statusResp.TaskId != "" {
+		t.Fatalf("exceptionAssigneeSub 未配置时不该建出任何待办，实际查到 task_id=%q", statusResp.TaskId)
 	}
 }

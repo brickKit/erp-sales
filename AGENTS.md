@@ -49,7 +49,7 @@
 
 ## 依赖与「为什么不依赖某某」
 
-⚠️ **本组件是全阶段二唯一有强依赖的组件**——四条边全在它身上：`mdm/customer`（`BatchGet` 校验+快照）、`mdm/product`（`BatchGet`+`ConvertQuantity`）、`erp/inventory`（TCC 四件套）、`erp/finance`（`CheckPeriodOpen`+`BatchGetCreditExposure`，改历史单/定时对账用）。弱依赖 `infra/workflow`（`optional: true`，**阶段二它根本不存在**，缺失时 `besdk.Endpoint()` 的二值返回要判 `ok==false` 就跳过建待办只打日志——这是平台验收用例 5 本阶段第一次具备验证前提）。
+⚠️ **本组件是全阶段二唯一有强依赖的组件**——四条边全在它身上：`mdm/customer`（`BatchGet` 校验+快照）、`mdm/product`（`BatchGet`+`ConvertQuantity`）、`erp/inventory`（TCC 四件套）、`erp/finance`（`CheckPeriodOpen`+`BatchGetCreditExposure`，改历史单/定时对账用）。弱依赖 `infra/workflow`（`optional: true`，阶段三已建成并接通：`compensateReserve` 补偿连续失败 3 次时调 `CreateTask` 建异常待办，消费 `task.completed.v1` 恢复订单，见 §3.1、§4.4.4）——缺失时 `besdk.Endpoint()` 的二值返回要判 `ok==false` 就跳过建待办只打日志。
 
 **明确不依赖：**
 - `crm-*`：§1.4 铁律，CRM 与 ERP 零同步边，仅事件握手。阶段三的赢单转订单走事件，**绝不能顺手加同步调用**
@@ -68,10 +68,13 @@
 | 用户请求路径上任何一条依赖边用 `besdk.SystemClient` | 绕过下游数据权限，不报错，返回的数据只是"多了一些" | 设计计计划 §3.1；导读第 21 条 |
 | 订单行不快照，改成 join `mdm-product`/`mdm-customer` 拿最新值 | 产品数据在另一个进程另一个 schema 里，**物理上 join 不到**；且改名会重写历史订单 | 设计计划 §2.2 |
 | `sales_order_items` 按行自己的 `created_at` 分区 | 补加的订单行会落进和订单头不同的分区，主表归档时子表搬不干净——子表必须跟随主表，用**订单头的** `created_at` | 设计计划 §2、§7 |
-| 补偿失败时无限重试 | "补偿的补偿"死循环比不补偿更糟。连续失败 3 次必须标 `SUSPENDED` + 告警，阶段二只打日志不接 workflow | 设计计划 §3.1、§4.4.4 |
+| 补偿失败时无限重试 | "补偿的补偿"死循环比不补偿更糟。连续失败 3 次必须标 `SUSPENDED` + 告警，阶段二只打日志，阶段三接 `infra-workflow` 建异常待办 | 设计计划 §3.1、§4.4.4 |
 | 弱依赖 `infra/workflow` 缺失时把它的 endpoint 当空字符串处理 | 平台对缺失的弱依赖**不注入这个变量**，不是空串——下标/字符串比较判空会得到错误结论。必须用 `besdk.Endpoint()` 的二值返回判 `ok` | 设计计划 §5、总纲 §3.6 |
 | 给 `dependencies.components` 加 `crm-*` 或任何非四条强依赖之外的边 | CRM 与 ERP 零同步边是硬铁律，阶段三的赢单转订单走事件 | §1.4 铁律、设计计划 §5 |
 | 写弱依赖 `infra/workflow` 时省略 `@版本号`（想着"反正它还不存在，写个版本也没意义"） | `brickkit up`/生成阶段直接报 `MANIFEST_INVALID`：**弱依赖照样要求 `id@精确版本` 的格式**，`optional: true` 只影响"解析不到时警告而不是报错"这个阶段，不影响"引用本身必须写成合法格式"这个更早的 schema 校验。真机跑 `brickkit up --dry-run` 才发现——补版本号（`infra/workflow@1.0.0`，跟其它组件的初版号一致）后警告降级为"弱依赖缺失"，不阻断 | Task 16 实测；brickKit `internal/manifest/parse.go` |
+| 调 `infra-workflow` 的 `CloseTask` 来关闭补偿异常待办 | `CloseTask` 是组件间协议（人代表业务组件创建/关闭待办等于绕过业务规则）——异常待办由**人**在 `infra-workflow` 的"我的待办"UI 里点"同意"来关闭，本组件只**消费** `task.completed.v1`，永远不会、也不许主动调 `CloseTask` | 设计计划 §3.1、§4.4.4 |
+| `ResumeFromExceptionTx` 只判 `status == SUSPENDED` 就恢复，不核对 `suspended_reason` | 一张后来被权威额度判定（`finance.credit.rejected.v1`）重新标了 `SUSPENDED`（`suspended_reason` 已被覆盖）的订单会被这条事件误恢复——两条 `SUSPENDED` 来源共用同一个 `status` 值，`reason` 是唯一能区分"这次挂起是不是我发起那条待办对应的那次"的依据 | 设计计划 §3.1、`repo/suspend.go` 的 `ExceptionReasonCompensationFailed` |
+| `infra.workflow.task.completed.v1` 消费者不过滤 `source_component`/`source_aggregate` | 这个 subject 是全平台共用的，其它业务组件发起的待办完成事件也会广播到这里——不过滤会拿别的组件的 `source_id` 当自己的订单 id 去查，要么查不到报错，要么（更糟）撞上一个恰好存在的无关订单 id | `consumer/consumer.go` 的 `workflowTaskCompletedHandler` |
 
 ## 改代码前的自查
 
@@ -81,3 +84,5 @@
 4. **我调依赖组件用的是 `UserClient` 还是 `SystemClient`？** 用户请求路径上只许 `UserClient`。
 5. **我是不是把订单行改成 join 产品/客户拿最新值，而不是读快照？** 停下——历史订单要读当时的快照，不是当前值。
 6. **这个改动会不会让 `contracts/sales.proto` 出现破坏性变更？** 下游（阶段三的 `crm-opportunity`、BFF）都会消费这份契约，只能向后兼容地追加。
+7. **我是不是想让本组件主动调 `infra-workflow` 的 `CloseTask`？** 停下——那是组件间协议，异常待办只能由人在 `infra-workflow` 自己的 UI 里关闭，本组件永远只是 `task.completed.v1` 的消费者。
+8. **我改 `ResumeFromExceptionTx` 时是不是去掉了 `suspended_reason` 精确匹配这道判据？** 停下——只判 `status == SUSPENDED` 会误恢复一张实际因权威额度超限被挂起的订单。

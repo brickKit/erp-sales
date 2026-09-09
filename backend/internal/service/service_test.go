@@ -50,7 +50,7 @@ func newTestService(t *testing.T) (*Service, *repo.Repo) {
 	r := repo.New(db, "erp_sales_rw", "erp_sales")
 	// tcc.New 只存配置，不发起网络调用——本文件不测 ConfirmOrder/
 	// CancelOrder/ShipOrder，构造它只是为了满足 New() 的签名。
-	orch := tcc.New(r, "1", time.Second)
+	orch := tcc.New(r, "1", time.Second, "")
 	return New(r, orch, slog.Default()), r
 }
 

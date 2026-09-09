@@ -2,14 +2,18 @@ package tcc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
+
+	besdk "github.com/brickKit/be-sdk-go"
 
 	"github.com/brickKit/erp-sales/backend/internal/client"
 	"github.com/brickKit/erp-sales/backend/internal/repo"
 
 	inventoryv1 "github.com/brickKit/erp-sales/gen/erp/inventory/v1"
+	workflowv1 "github.com/brickKit/erp-sales/gen/infra/workflow/v1"
 )
 
 // reserveIdemKey 派生库存预留这一步专用的幂等键——与 ConfirmOrder 命令
@@ -172,7 +176,67 @@ func (o *Orchestrator) compensateReserve(
 	}
 	if incErr != nil {
 		logger.Error("累加补偿失败计数出错", "order_id", orderID, "error", incErr)
+		return
 	}
+	// ⚠️ attempts 达到 3 之后 SuspendOrderTx 已经在 IncrementCompensationAttempts
+	// 内部把订单转 SUSPENDED——一旦 SUSPENDED，ConfirmOrder 顶部的
+	// status != DRAFT 校验会直接拒绝任何后续调用，compensateReserve 不
+	// 可能在同一次"挂起"里被再次触发，idempotencyKey 派生的 CreateTask
+	// 幂等键因此天然只会用一次，不需要额外的去重状态（设计计划 §4.4.4）。
+	if attempts >= 3 {
+		o.maybeCreateExceptionTask(ctx, orderID, idempotencyKey, logger)
+	}
+}
+
+// maybeCreateExceptionTask 把"补偿连续失败 3 次"这件事登记成 infra-workflow
+// 的一条 exception 待办（设计计划 §4.4.4，阶段三 Task 8 落地）。两个独立
+// 的"跳过"开关都合法，不是错误：弱依赖没装配（besdk.Endpoint 判 ok==false，
+// 阶段二默认就是这样）、或者 exceptionAssigneeSub 还没配置（本阶段没有
+// mdm-org，指派给谁需要显式配置，见 tcc.Orchestrator 的字段注释）。
+func (o *Orchestrator) maybeCreateExceptionTask(ctx context.Context, orderID, idempotencyKey string, logger *slog.Logger) {
+	if _, ok := besdk.Endpoint("infra/workflow", "grpc"); !ok {
+		logger.Info("infra/workflow 未装配，跳过建异常待办", "order_id", orderID)
+		return
+	}
+	if o.ExceptionAssigneeSub == "" {
+		logger.Warn("exceptionAssigneeSub 未配置，跳过建异常待办", "order_id", orderID)
+		return
+	}
+
+	wfConn, closeWf, err := client.Workflow(ctx)
+	if err != nil {
+		logger.Error("拨号 infra-workflow 失败，跳过建异常待办", "order_id", orderID, "error", err)
+		return
+	}
+	defer closeWf()
+
+	summaryJSON, err := json.Marshal(map[string]string{"order_id": orderID})
+	if err != nil {
+		logger.Error("序列化异常待办摘要失败", "order_id", orderID, "error", err)
+		return
+	}
+	_, err = wfConn.CreateTask(ctx, &workflowv1.CreateTaskRequest{
+		// 派生自本次 ConfirmOrder 命令自己的 idempotency_key——同一个确认
+		// 命令重放（网络重试）应该拿到同一条待办；订单从 SUSPENDED 恢复
+		// 后如果再次补偿失败 3 次，调用方会带一个全新的 idempotency_key
+		// 发起新的 ConfirmOrder，天然产生一条新的待办，不会撞上旧的
+		// command_idempotency 记录。
+		IdempotencyKey:   idempotencyKey + ":exception-task",
+		Type:             workflowv1.TaskType_TASK_TYPE_EXCEPTION,
+		AssigneeSub:      o.ExceptionAssigneeSub,
+		AssigneeDeptPath: "", // 本阶段没有 mdm-org，留空——站在部门树根节点的人天然看得到全部
+		Title:            fmt.Sprintf("订单 %s 补偿连续失败，需要人工介入", orderID),
+		SummaryJson:      string(summaryJSON),
+		SourceComponent:  "erp/sales",
+		SourceAggregate:  "sales_order",
+		SourceId:         orderID,
+		DeepLink:         "/erp/sales/orders/" + orderID,
+	})
+	if err != nil {
+		logger.Error("建异常待办失败", "order_id", orderID, "error", err)
+		return
+	}
+	logger.Info("已建异常待办", "order_id", orderID)
 }
 
 // exceedsCreditLimit 判断"已用额度 + 本单金额"是否超过"额度"。三个都是

@@ -38,9 +38,13 @@ func New(ctx context.Context, rt *besdk.Runtime) (*besdk.Module, error) {
 	// 缺失属于部署错误，不该带着空字符串跑起来（同 rt.Config.MustString
 	// 自己的既有判据）。
 	defaultWarehouseID := rt.Config.MustString("defaultWarehouseId")
+	// exceptionAssigneeSub 留空是合法状态（本阶段没有 mdm-org，见
+	// tcc.Orchestrator 的字段注释）——留空时 maybeCreateExceptionTask 只
+	// 打日志跳过，不阻断 ConfirmOrder 本身的补偿逻辑。
+	exceptionAssigneeSub := rt.Config.StringOr("exceptionAssigneeSub", "")
 
 	r := repo.New(rt.DB, role, schema)
-	orch := tcc.New(r, defaultWarehouseID, reserveTimeout)
+	orch := tcc.New(r, defaultWarehouseID, reserveTimeout, exceptionAssigneeSub)
 	svc := service.New(r, orch, rt.Logger)
 
 	// HTTP：engine 必须用 besdk.NewGinEngine，它已挂好 OTel / request-id /

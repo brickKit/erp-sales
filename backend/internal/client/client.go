@@ -25,6 +25,7 @@ import (
 
 	financev1 "github.com/brickKit/erp-sales/gen/erp/finance/v1"
 	inventoryv1 "github.com/brickKit/erp-sales/gen/erp/inventory/v1"
+	workflowv1 "github.com/brickKit/erp-sales/gen/infra/workflow/v1"
 	customerv1 "github.com/brickKit/erp-sales/gen/mdm/customer/v1"
 	productv1 "github.com/brickKit/erp-sales/gen/mdm/product/v1"
 )
@@ -75,4 +76,19 @@ func Finance(ctx context.Context) (financev1.FinanceServiceClient, func() error,
 		return nil, func() error { return nil }, err
 	}
 	return financev1.NewFinanceServiceClient(conn), conn.Close, nil
+}
+
+// Workflow 拨一条到 infra-workflow 的连接，返回类型化 stub——⚠️ 唯一的
+// 弱依赖：调用方必须先用 besdk.Endpoint("infra/workflow", "grpc") 的
+// 二值返回判断这条依赖有没有被装配（设计计划 §5、§9 待决问题 §4.4.4），
+// ok == false 就跳过整个建异常待办的动作，不要走到这个函数——dial()
+// 内部的 UserClient 虽然在端点缺失时也会返回一个干净的 error（不会
+// panic），但那个错误信息不区分"没装这个组件"与"装了但连不上"，调用方
+// 想把两种情况分开记日志就必须自己先判一次 Endpoint。
+func Workflow(ctx context.Context) (workflowv1.WorkflowServiceClient, func() error, error) {
+	conn, err := dial(ctx, "infra/workflow")
+	if err != nil {
+		return nil, func() error { return nil }, err
+	}
+	return workflowv1.NewWorkflowServiceClient(conn), conn.Close, nil
 }
