@@ -33,6 +33,8 @@ func ToStatus(err error) error {
 		return status.Error(codes.Unavailable, err.Error())
 	case errors.Is(err, ErrInvalidArgument), errors.Is(err, repo.ErrInvalidArgument):
 		return status.Error(codes.InvalidArgument, err.Error())
+	case errors.Is(err, repo.ErrForbidden):
+		return status.Error(codes.PermissionDenied, err.Error())
 	}
 	// 透传下游依赖组件（mdm-customer/mdm-product/erp-inventory/erp-finance）
 	// 已经返回的真实 gRPC status——ok==false 说明 err 根本不是一个 gRPC

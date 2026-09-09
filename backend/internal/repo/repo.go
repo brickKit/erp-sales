@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // ── 哨兵错误。grpc/http 两层通过 service.ToStatus 统一映射（同
@@ -24,6 +25,25 @@ var ErrOrderNotDraft = errors.New("订单不是草稿状态")
 // ErrOrderTerminal：对一张已经是终态（COMPLETED/CANCELLED/CLOSED）的
 // 订单做状态流转——CANCELLED 是终态，不能复活（设计计划 §2.1）。
 var ErrOrderTerminal = errors.New("订单已经是终态，不能再流转")
+
+// ErrForbidden：调用者对某张具体订单既不在其 org 范围内也不是 owner
+// （阶段三 Task 6，§14.2.2 的 org+owner 两维）。⚠️ 同 erp-inventory/
+// erp-finance 的 ErrForbidden：这张订单真实存在，调用者只是看不见，
+// 与 ErrNotFound 语义不同，不能混用。
+var ErrForbidden = errors.New("无权访问该订单")
+
+// InScope 判断这张订单是否在调用者的数据范围内——org（dept_path 前缀
+// 匹配）或 owner（owner_id 精确匹配）任一命中就算在范围内。"本部门及
+// 下级"与"我的订单"是同一个人可能同时具备的两种"看得到"的理由，不是
+// 互斥的，所以用 OR 不是 AND（设计计划 §1："我的订单"和"本部门及下级
+// 的订单"是销售组织最基本的两个视图）。
+//
+// ⚠️ scopePrefix 为空时 strings.HasPrefix 对任何字符串都返回 true——
+// 坐在部门树根节点的人天然看见全部，不需要特判（同 ListOrders 的 SQL
+// 版本 `dept_path LIKE '' || '%'` 是同一件事的两种写法）。
+func (o *Order) InScope(scopePrefix, scopeOwner string) bool {
+	return strings.HasPrefix(o.DeptPath, scopePrefix) || o.OwnerID == scopeOwner
+}
 
 type Repo struct {
 	db     *sql.DB

@@ -10,9 +10,28 @@ import (
 	"fmt"
 	"log/slog"
 
+	besdk "github.com/brickKit/be-sdk-go"
 	"github.com/brickKit/erp-sales/backend/internal/repo"
 	"github.com/brickKit/erp-sales/backend/internal/tcc"
 )
+
+// checkOrderInScope 是 ConfirmOrder/CancelOrder/ShipOrder 共用的一步：
+// 这三个命令在真正执行状态流转之前，先确认这张订单在调用者的 org/owner
+// 范围内——只保护 List/Get 两个读接口、放过写接口，等于给"看不到就该
+// 动不了"这条判据留了个后门（同 erp-inventory/erp-finance 的既有判据：
+// 写路径必须和读路径一样受数据范围约束）。多一次 GetOrder 查询的代价
+// 换来这条防线不留缺口，可接受。
+func (s *Service) checkOrderInScope(ctx context.Context, orderID string) error {
+	order, err := s.repo.GetOrder(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	scope := besdk.ScopeOf(ctx)
+	if !order.InScope(scope.Prefix, scope.Owner) {
+		return repo.ErrForbidden
+	}
+	return nil
+}
 
 var ErrInvalidArgument = errors.New("参数不合法")
 
@@ -65,6 +84,9 @@ func (s *Service) ConfirmOrder(ctx context.Context, orderID, idempotencyKey stri
 	if idempotencyKey == "" {
 		return nil, fmt.Errorf("%w: idempotency_key 不能为空", ErrInvalidArgument)
 	}
+	if err := s.checkOrderInScope(ctx, orderID); err != nil {
+		return nil, err
+	}
 	order, err := s.tcc.ConfirmOrder(ctx, orderID, idempotencyKey, s.logger)
 	if err != nil {
 		s.logger.Error("确认订单失败", "order_id", orderID, "error", err)
@@ -80,6 +102,9 @@ func (s *Service) CancelOrder(ctx context.Context, orderID, idempotencyKey, reas
 	if idempotencyKey == "" {
 		return nil, fmt.Errorf("%w: idempotency_key 不能为空", ErrInvalidArgument)
 	}
+	if err := s.checkOrderInScope(ctx, orderID); err != nil {
+		return nil, err
+	}
 	order, err := s.tcc.CancelOrder(ctx, orderID, idempotencyKey, reason)
 	if err != nil {
 		s.logger.Error("取消订单失败", "order_id", orderID, "error", err)
@@ -94,6 +119,9 @@ func (s *Service) ShipOrder(ctx context.Context, orderID, idempotencyKey string)
 	}
 	if idempotencyKey == "" {
 		return nil, fmt.Errorf("%w: idempotency_key 不能为空", ErrInvalidArgument)
+	}
+	if err := s.checkOrderInScope(ctx, orderID); err != nil {
+		return nil, err
 	}
 	order, err := s.tcc.ShipOrder(ctx, orderID, idempotencyKey)
 	if err != nil {
@@ -118,10 +146,24 @@ func (s *Service) GetOrder(ctx context.Context, id string) (*repo.Order, error) 
 	if id == "" {
 		return nil, fmt.Errorf("%w: id 不能为空", ErrInvalidArgument)
 	}
-	return s.repo.GetOrder(ctx, id)
+	order, err := s.repo.GetOrder(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	scope := besdk.ScopeOf(ctx)
+	if !order.InScope(scope.Prefix, scope.Owner) {
+		return nil, repo.ErrForbidden
+	}
+	return order, nil
 }
 
 func (s *Service) ListOrders(ctx context.Context, in repo.ListInput) (*repo.ListResult, error) {
+	scope := besdk.ScopeOf(ctx)
+	if in.ViewMine {
+		in.ScopeOwner = scope.Owner
+	} else {
+		in.ScopePrefix = scope.Prefix
+	}
 	return s.repo.ListOrders(ctx, in)
 }
 

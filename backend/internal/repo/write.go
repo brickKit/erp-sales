@@ -35,10 +35,10 @@ type CreateOrderInput struct {
 	CustomerID     string
 	CustomerName   string // 快照，调用方从 mdm-customer BatchGet 结果里取
 	Items          []CreateOrderItemInput
-	// dept_id/dept_path/owner_id 是创建时快照（设计计划 §1）。阶段二
-	// 没有真实身份链路（besdk.ScopeOf 恒返回不限，同 §14.2.3 阶段二占位），
-	// 调用方目前传空字符串——列已经建好，阶段三 infra-authz 上线后回来
-	// 从 JWT claims 里取真实值，不需要再改表结构。
+	// dept_id/dept_path/owner_id 是创建时快照（设计计划 §1）。阶段三
+	// Task 6：调用方（tcc.CreateOrder）从 besdk.ScopeOf(ctx) 取真实值——
+	// DeptPath/OwnerID 直接是 scope.Prefix/scope.Owner，DeptID 是
+	// dept_path 末段推出来的叶子部门 id（tcc.leafDeptID）。
 	DeptID   string
 	DeptPath string
 	OwnerID  string

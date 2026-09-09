@@ -4,7 +4,7 @@ kind: Component
 metadata:
   id: erp/sales                      # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
   name: 销售管理
-  version: 1.0.4                     # 精确版本，不接受 ^ / ~ / latest
+  version: 1.0.5                     # 精确版本，不接受 ^ / ~ / latest
                                       # v1.0.3：纯重新构建，deployment.image 之前一直
                                       # 停在 1.0.1，v1.0.2 的源码改动从没真的打进镜像
                                       # 过（阶段三 Task 4 核对 brickkit up 真机时发现）；
@@ -44,10 +44,10 @@ artifacts:
 # 的天然测试场景（设计计划 §5）。
 dependencies:
   components:
-    - mdm/customer@1.0.2
-    - mdm/product@1.0.2
-    - erp/inventory@1.0.4
-    - erp/finance@1.0.2
+    - mdm/customer@1.0.3
+    - mdm/product@1.0.3
+    - erp/inventory@1.0.5
+    - erp/finance@1.0.3
     - { id: infra/workflow@1.0.0, optional: true }
   resources:
     # ⚠️ engine 逐字参与匹配（设计书 §2.7.3.1）：这里写的词必须与
@@ -63,6 +63,10 @@ configSchema:
       default: erp_sales
     iamJwksUrl:                      # JWT 本地验签的公钥来源。不对 IAM 建依赖边（决策 87）
       type: string
+    authzBundleUrl:                  # 阶段三 Task 6：功能权限判定的 bundle 轮询地址，
+                                      # 指向 infra-authz。不建依赖边（同 iamJwksUrl 的
+                                      # 判据，设计书 §14.1.4）
+      type: string
     otelBaseUrl:                     # ⚠️ 不能叫 otelEndpoint，*_ENDPOINT 是保留后缀
       type: string
       default: ""                    # 空 → Blackhole Exporter，零成本（§7.5）
@@ -77,7 +81,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/erp-sales:1.0.4
+  image: brickenterprise/erp-sales:1.0.5
   port: 8084                         # 端口册 registry/ports.tsv
   extraPorts:
     - { name: grpc, port: 9094 }     # → ERP_SALES_GRPC_ENDPOINT（值仍以 http:// 开头）

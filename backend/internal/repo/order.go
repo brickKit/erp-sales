@@ -157,6 +157,14 @@ type ListInput struct {
 	StatusFilter  string
 	CreatedAfter  time.Time
 	CreatedBefore time.Time
+	// ── 阶段三 Task 6：org/owner 两维数据范围，"我的订单"和"本部门及
+	// 下级的订单"是销售组织最基本的两个视图（设计计划 §1），由调用方
+	// （listOrdersHandler 的 ?view= 参数）静态选择用哪一个，本函数只
+	// 负责把选中的那个拼进 WHERE——同一条 SQL 不会同时用两个（那样会把
+	// "本部门"缩窄成"本部门里我自己的"，不是设计要的两个独立视图）。
+	ViewMine    bool   // true："我的订单"（owner_id = ScopeOwner）；false（默认）："本部门及下级"（dept_path 前缀匹配）
+	ScopePrefix string // ViewMine=false 时用，来自 besdk.ScopeOf(ctx).Prefix
+	ScopeOwner  string // ViewMine=true 时用，来自 besdk.ScopeOf(ctx).Owner
 }
 
 type ListResult struct {
@@ -181,6 +189,15 @@ func (r *Repo) ListOrders(ctx context.Context, in ListInput) (*ListResult, error
 	err := besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
 		query := `SELECT id FROM sales_orders WHERE created_at >= $1 AND created_at <= $2`
 		args := []any{q.From, q.To}
+		if in.ViewMine {
+			args = append(args, in.ScopeOwner)
+			query += fmt.Sprintf(" AND owner_id = $%d", len(args))
+		} else {
+			// ScopePrefix 为空（部门树根节点）时 `LIKE '' || '%'` 等价于
+			// `LIKE '%'`，天然匹配全部，不需要特判（§14.2.4 的既有判据）。
+			args = append(args, in.ScopePrefix)
+			query += fmt.Sprintf(" AND dept_path LIKE $%d || '%%'", len(args))
+		}
 		if in.CustomerID != "" {
 			args = append(args, in.CustomerID)
 			query += fmt.Sprintf(" AND customer_id = $%d", len(args))
