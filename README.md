@@ -7,12 +7,13 @@
 - `ConfirmOrder` 的 TCC 链：校验客户/产品 → 本地信用额度预判 → `Reserve` 库存 → 建单 + 发事件，失败按情形分别处理或补偿
 - 定价（`CalculatePriceDryRun`）：前端/BFF 严禁自己算钱，只能调这个接口
 - `ShipOrder`：预留转实际出库（调 `erp-inventory` 的 `ConfirmIssue`）
+- 消费 `crm.opportunity.won.v1`：赢单自动转订单（阶段三 Task 14），走同一套建单+确认逻辑但用系统身份客户端，失败建 `infra-workflow` 异常待办通知销售，不回传给 `crm-opportunity`
 
 ## 需要哪些基础资源
 | 资源 | 形态 | 为什么需要 | 怎么起 |
 |---|---|---|---|
 | PostgreSQL 16 | **A**（brickKit 基础资源，`kind: database`） | 数据持久化，独占 schema `erp_sales` | 装配仓库根目录 `make up` |
-| NATS 2.10 | **A**（`kind: mq`） | 发布 `sales.order.*` 事件；消费 `finance.credit.rejected.v1`/`mdm.customer.*`/`finance.voucher.posted.v1` | 同上 |
+| NATS 2.10 | **A**（`kind: mq`） | 发布 `sales.order.*` 事件；消费 `finance.credit.rejected.v1`/`mdm.customer.*`/`infra.workflow.task.completed.v1`/`crm.opportunity.won.v1` | 同上 |
 
 ⚠️ 形态 A / B / C 的区别见设计书 §2.7.0。本组件**不需要** Traefik 与 Casdoor
 就能单独跑起来——它不对 IAM 建依赖边，JWT 走本地验签（决策 87）。

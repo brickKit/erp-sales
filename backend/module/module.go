@@ -71,7 +71,7 @@ func New(ctx context.Context, rt *besdk.Runtime) (*besdk.Module, error) {
 			go func() { errCh <- besdk.StartOutboxPump(ctx, rt.DB, schema, rt.NATS, rt.Logger) }()
 			go func() { errCh <- partition.Start(ctx, rt.DB, role, schema, rt.Logger) }()
 			go func() { errCh <- partition.StartMonthly(ctx, rt.DB, role, schema, rt.Logger) }()
-			go func() { errCh <- consumer.Start(ctx, rt.DB, role, schema, rt.NATS, rt.Logger) }()
+			go func() { errCh <- consumer.Start(ctx, rt.DB, role, schema, rt.NATS, orch, rt.Logger) }()
 
 			select {
 			case <-ctx.Done():

@@ -2,9 +2,10 @@
 // 转 SUSPENDED）+ mdm.customer.created.v1/.updated.v1（维护
 // customer_snapshots.credit_limit）+ infra.workflow.task.completed.v1
 // （补偿异常待办被人工确认已处理→订单从 SUSPENDED 恢复回 DRAFT，设计
-// 计划 §4.4.4，阶段三 Task 8 落地）。⚠️ 不消费 finance.voucher.posted.v1
-// ——它没有 customer_id，credit_exposure 的新鲜度靠定时对账（设计计划
-// §9 第 6 条）。crm.opportunity.won.v1 阶段二只在事件清单占位，不订阅。
+// 计划 §4.4.4，阶段三 Task 8 落地）+ crm.opportunity.won.v1（赢单自动
+// 转订单，阶段三 Task 14 落地，见 backend/internal/tcc/opportunity_won.go）。
+// ⚠️ 不消费 finance.voucher.posted.v1——它没有 customer_id，
+// credit_exposure 的新鲜度靠定时对账（设计计划 §9 第 6 条）。
 package consumer
 
 import (
@@ -19,9 +20,10 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/brickKit/erp-sales/backend/internal/repo"
+	"github.com/brickKit/erp-sales/backend/internal/tcc"
 )
 
-func Start(ctx context.Context, db *sql.DB, role, schema string, nc *nats.Conn, logger *slog.Logger) error {
+func Start(ctx context.Context, db *sql.DB, role, schema string, nc *nats.Conn, orch *tcc.Orchestrator, logger *slog.Logger) error {
 	subjects := []struct {
 		subject string
 		handle  func(context.Context, *sql.Tx, besdk.Event) error
@@ -30,6 +32,7 @@ func Start(ctx context.Context, db *sql.DB, role, schema string, nc *nats.Conn, 
 		{"mdm.customer.created.v1", customerSnapshotHandler()},
 		{"mdm.customer.updated.v1", customerSnapshotHandler()},
 		{"infra.workflow.task.completed.v1", workflowTaskCompletedHandler()},
+		{"crm.opportunity.won.v1", opportunityWonHandler(orch, logger)},
 	}
 
 	errCh := make(chan error, len(subjects))
@@ -127,5 +130,52 @@ func workflowTaskCompletedHandler() func(context.Context, *sql.Tx, besdk.Event) 
 		}
 		_, err = repo.ResumeFromExceptionTx(ctx, tx, orderID)
 		return err
+	}
+}
+
+// opportunityWonItemPayload/opportunityWonPayload 字段照抄 crm-opportunity
+// 已经真实存在的契约（contracts/events/opportunity.events.json 的
+// crm.opportunity.won.v1，crm-opportunity 设计计划 §4.1 的字段表）。
+type opportunityWonItemPayload struct {
+	ProductID       string `json:"product_id"`
+	Quantity        string `json:"quantity"`
+	QuotedUnitPrice string `json:"quoted_unit_price"`
+}
+
+type opportunityWonPayload struct {
+	OpportunityID string                      `json:"opportunity_id"`
+	CustomerID    string                      `json:"customer_id"`
+	Items         []opportunityWonItemPayload `json:"items"`
+	OwnerID       string                      `json:"owner_id"`
+	DeptPath      string                      `json:"dept_path"`
+	Currency      string                      `json:"currency"`
+}
+
+// opportunityWonHandler 消费赢单事件、自动转订单（阶段三 Task 14，设计
+// 计划 §8 判定的 Fork 点，本阶段选自动）。⚠️ 真正的建单/确认编排在
+// tcc.Orchestrator.HandleOpportunityWon 里，不在这里、也不用这个 handler
+// 拿到的 tx——那条编排要做真实的跨组件 gRPC 调用（BatchGet/Reserve），
+// 网络往返期间不能占着这张 event_inbox 记账用的短事务（同 ConfirmOrder
+// 正常路径"事务要短，网络调用留在事务之外"的既有判据）。本 handler
+// 永远返回 nil：crm.opportunity.won.v1 只应该被消费一次，失败与否由
+// HandleOpportunityWon 内部决定要不要建异常待办，不是靠事件总线重投
+// （be-sdk-go 当前实现本来就不支持重投，见 besdk.Consume 自己的文档）。
+func opportunityWonHandler(orch *tcc.Orchestrator, logger *slog.Logger) func(context.Context, *sql.Tx, besdk.Event) error {
+	return func(ctx context.Context, _ *sql.Tx, ev besdk.Event) error {
+		var p opportunityWonPayload
+		if err := json.Unmarshal(ev.Payload, &p); err != nil {
+			return fmt.Errorf("解析 %s payload: %w", ev.Subject, err)
+		}
+		items := make([]tcc.OpportunityWonItem, 0, len(p.Items))
+		for _, it := range p.Items {
+			items = append(items, tcc.OpportunityWonItem{
+				ProductID: it.ProductID, Quantity: it.Quantity, QuotedUnitPrice: it.QuotedUnitPrice,
+			})
+		}
+		orch.HandleOpportunityWon(ctx, tcc.OpportunityWonPayload{
+			OpportunityID: p.OpportunityID, CustomerID: p.CustomerID, Items: items,
+			OwnerID: p.OwnerID, DeptPath: p.DeptPath, Currency: p.Currency, Revision: ev.Version,
+		}, logger)
+		return nil
 	}
 }

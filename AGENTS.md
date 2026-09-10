@@ -45,7 +45,7 @@
 
 **发布事件：** `sales.order.created.v1`（⚠️ 在 `ConfirmOrder` 成功后发，不是 `CreateOrder`——草稿单不该产生应收凭证）、`sales.order.cancelled.v1`、`sales.order.shipped.v1`。
 
-**消费事件：** `finance.credit.rejected.v1`（权威额度超限→订单转 `SUSPENDED`）、`mdm.customer.created.v1`/`.updated.v1`（维护 `customer_snapshots.credit_limit`）、`finance.voucher.posted.v1`（维护 `customer_snapshots.credit_exposure`）、`crm.opportunity.won.v1`（阶段三，本阶段只占位不实现 handler）。
+**消费事件：** `finance.credit.rejected.v1`（权威额度超限→订单转 `SUSPENDED`）、`mdm.customer.created.v1`/`.updated.v1`（维护 `customer_snapshots.credit_limit`）、`finance.voucher.posted.v1`（维护 `customer_snapshots.credit_exposure`）、`crm.opportunity.won.v1`（阶段三 Task 14 落地：赢单自动转订单，见 `backend/internal/tcc/opportunity_won.go`——建单+确认走系统身份客户端（`client.*System`），任何一步失败都建 `infra-workflow` 异常待办通知事件里的 `owner_id`，不回传失败给 `crm-opportunity`）。
 
 ## 依赖与「为什么不依赖某某」
 
@@ -75,6 +75,9 @@
 | 调 `infra-workflow` 的 `CloseTask` 来关闭补偿异常待办 | `CloseTask` 是组件间协议（人代表业务组件创建/关闭待办等于绕过业务规则）——异常待办由**人**在 `infra-workflow` 的"我的待办"UI 里点"同意"来关闭，本组件只**消费** `task.completed.v1`，永远不会、也不许主动调 `CloseTask` | 设计计划 §3.1、§4.4.4 |
 | `ResumeFromExceptionTx` 只判 `status == SUSPENDED` 就恢复，不核对 `suspended_reason` | 一张后来被权威额度判定（`finance.credit.rejected.v1`）重新标了 `SUSPENDED`（`suspended_reason` 已被覆盖）的订单会被这条事件误恢复——两条 `SUSPENDED` 来源共用同一个 `status` 值，`reason` 是唯一能区分"这次挂起是不是我发起那条待办对应的那次"的依据 | 设计计划 §3.1、`repo/suspend.go` 的 `ExceptionReasonCompensationFailed` |
 | `infra.workflow.task.completed.v1` 消费者不过滤 `source_component`/`source_aggregate` | 这个 subject 是全平台共用的，其它业务组件发起的待办完成事件也会广播到这里——不过滤会拿别的组件的 `source_id` 当自己的订单 id 去查，要么查不到报错，要么（更糟）撞上一个恰好存在的无关订单 id | `consumer/consumer.go` 的 `workflowTaskCompletedHandler` |
+| 在 `opportunity_won.go` 里用 `client.Customer`/`client.Product`/`client.Inventory`（不带 `System` 后缀的那组） | 事件 handler 语境下 `ctx` 里没有真实调用者的 JWT 可透传，`UserClient` 会拿到空 Authorization——症状不是报错，是下游按"匿名"身份处理，如果哪天这几个 rpc 也开始按身份做权限判定，行为会悄悄不对。事件 handler 只许用 `client.*System`（`§14.2.6`），`Customer`/`Product`/`Inventory`（不带 `System`）只许出现在真实用户请求路径（`service`/`tcc` 里被 REST/gRPC 入口调用的那几条链） | `client/client.go` 的 `dialSystem` 注释、`opportunity_won.go` 顶部注释 |
+| `HandleOpportunityWon` 返回 error 给 `besdk.Consume` 的 `fn`，期望事件总线重投 | `besdk.Consume` 当前实现是**普通 NATS 核心订阅，不支持重投**（fn 报错只记日志，见 `be-sdk-go` `events.go` 自己的文档注释）——把失败处理寄望于"下次还会再投一次"会让这条赢单事件永远没有第二次机会。正确做法是 `opportunityWonHandler` 永远返回 `nil`，失败与否完全由 `HandleOpportunityWon` 内部决定要不要建异常待办通知人 | `consumer/consumer.go` 的 `opportunityWonHandler`、`opportunity_won.go` 顶部注释 |
+| 复用 `ConfirmOrder`/`CreateOrder`（不带 `ForOpportunity` 后缀的公开方法）给事件 handler 用 | 这两个方法内部硬编码了 `besdk.ScopeOf(ctx)`（取归属）与 `UserClient`（拨号），事件 handler 语境下 `ctx` 没有 Claims，`ScopeOf` 会直接 panic。必须用 `createOrderForOpportunity`/`confirmOrderForOpportunity`——两者复用同一套 `o.reserve`/`o.compensateReserve` 等微妙的共享逻辑，只是外层编排换了归属来源与客户端身份 | `tcc/opportunity_won.go` |
 
 ## 改代码前的自查
 
