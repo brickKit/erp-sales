@@ -4,7 +4,10 @@ kind: Component
 metadata:
   id: erp/sales                      # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
   name: 销售管理
-  version: 1.0.13                    # 精确版本，不接受 ^ / ~ / latest
+  version: 1.0.14                    # 精确版本，不接受 ^ / ~ / latest
+    # v1.0.14：依赖版本号同步跟进 erp/inventory@1.0.9（seed.sh 探测式
+    # 关联的 idempotency_key 改用真实产品 id，无破坏性变更），
+    # dependency-version-scan 真机抓到的连锁漂移。
     # v1.0.13：依赖版本号同步跟进 erp/inventory@1.0.8（新增 make seed/
     # db-reset + 修 down 迁移外键漂移 bug，无破坏性变更），
     # dependency-version-scan 真机抓到的连锁漂移。
@@ -83,7 +86,7 @@ dependencies:
   components:
     - mdm/customer@1.0.4
     - mdm/product@1.0.4
-    - erp/inventory@1.0.8
+    - erp/inventory@1.0.9
     - erp/finance@1.0.5
     - { id: infra/workflow@1.0.2, optional: true }
   resources:
@@ -121,7 +124,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/erp-sales:1.0.13
+  image: brickenterprise/erp-sales:1.0.14
   port: 8084                         # 端口册 registry/ports.tsv
   extraPorts:
     - { name: grpc, port: 9094 }     # → ERP_SALES_GRPC_ENDPOINT（值仍以 http:// 开头）
