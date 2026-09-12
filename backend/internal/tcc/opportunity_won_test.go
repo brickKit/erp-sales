@@ -23,15 +23,16 @@ import (
 func TestHandleOpportunityWon_真实建单确认成功(t *testing.T) {
 	requireE2EEnv(t)
 	db := testDB(t)
+	rdb := realDB(t)
 	ctx := e2eTestCtx() // 只用于建测试客户/产品这两个 setup 步骤，同 confirm_test.go 的既有判据
 	orch := newTestOrchestrator(db, 5*time.Second)
 
 	customerID := createRealCustomer(t, ctx, "100000.00")
 	seedCustomerSnapshot(t, db, customerID, "100000.00")
 	productID := createRealProduct(t, ctx)
-	receiveRealStock(t, ctx, db, productID, "50")
+	receiveRealStock(t, ctx, rdb, productID, "50")
 
-	before := getRealBalance(t, ctx, db, productID)
+	before := getRealBalance(t, ctx, rdb, productID)
 
 	opportunityID := uniqueSuffix("test-opp-won")
 	payload := OpportunityWonPayload{
@@ -61,7 +62,7 @@ func TestHandleOpportunityWon_真实建单确认成功(t *testing.T) {
 	}
 
 	// 断言库存真的被占住了——不是订单侧自己说了算。
-	after := getRealBalance(t, ctx, db, productID)
+	after := getRealBalance(t, ctx, rdb, productID)
 	beforeReserved, _ := strconv.ParseFloat(before.ReservedQty, 64)
 	afterReserved, _ := strconv.ParseFloat(after.ReservedQty, 64)
 	if afterReserved-beforeReserved != 3 {
@@ -78,15 +79,16 @@ func TestHandleOpportunityWon_库存不足时不建单确认(t *testing.T) {
 	requireE2EEnv(t)
 	requireWorkflowEnv(t)
 	db := testDB(t)
+	rdb := realDB(t)
 	ctx := e2eTestCtx()
 	orch := newTestOrchestrator(db, 5*time.Second)
 
 	customerID := createRealCustomer(t, ctx, "100000.00")
 	seedCustomerSnapshot(t, db, customerID, "100000.00")
 	productID := createRealProduct(t, ctx)
-	receiveRealStock(t, ctx, db, productID, "2") // 只入 2 件
+	receiveRealStock(t, ctx, rdb, productID, "2") // 只入 2 件
 
-	before := getRealBalance(t, ctx, db, productID)
+	before := getRealBalance(t, ctx, rdb, productID)
 
 	opportunityID := uniqueSuffix("test-opp-won-insufficient")
 	ownerSub := uniqueSuffix("owner")
@@ -109,7 +111,7 @@ func TestHandleOpportunityWon_库存不足时不建单确认(t *testing.T) {
 	}
 
 	// 库存确实没被占住。
-	after := getRealBalance(t, ctx, db, productID)
+	after := getRealBalance(t, ctx, rdb, productID)
 	if after.ReservedQty != before.ReservedQty {
 		t.Fatalf("库存不足的 Reserve 不该留下任何占用，before=%s after=%s", before.ReservedQty, after.ReservedQty)
 	}

@@ -38,9 +38,9 @@ const testWarehouseID = "1" // WH-EAST，迁移播种数据（同 erp-inventory 
 
 func requireE2EEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"MDM_CUSTOMER_GRPC_ENDPOINT", "MDM_PRODUCT_GRPC_ENDPOINT", "ERP_INVENTORY_GRPC_ENDPOINT"} {
+	for _, k := range []string{"MDM_CUSTOMER_GRPC_ENDPOINT", "MDM_PRODUCT_GRPC_ENDPOINT", "ERP_INVENTORY_GRPC_ENDPOINT", "REAL_PG_DSN"} {
 		if _, ok := os.LookupEnv(k); !ok {
-			t.Skipf("未设置 %s，跳过真故障注入测试（需要三个依赖组件真的在跑）", k)
+			t.Skipf("未设置 %s，跳过真故障注入测试（需要三个依赖组件真的在跑，通过 test-cross.sh 运行）", k)
 		}
 	}
 }
@@ -50,6 +50,30 @@ func testDB(t *testing.T) *sql.DB {
 	dsn := os.Getenv("TEST_PG_DSN")
 	if dsn == "" {
 		t.Skip("未设置 TEST_PG_DSN")
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+// realDB 连的是真实依赖容器（erp-inventory 等）真正在用的那个物理数据库
+// （brickkit_db），跟 testDB 连的 brickkit_test_db 物理分开（总纲"测试库
+// 与演示库分开"）——receiveRealStock/getRealBalance 直接读写 erp-inventory
+// 的 schema，必须用这个连接，不能跟 testDB 混用：erp-sales 自己的状态
+// （订单、预留跟踪）由本测试进程内的 orchestrator 直接操作，落在
+// testDB 没问题；但 erp-inventory 是一个真实、独立跑着的容器，它的
+// Reserve 等 gRPC 调用读写的是它自己连着的 brickkit_db，写进
+// brickkit_test_db 的数据它永远看不到——这是真实踩过的坑（曾经让
+// TestConfirmOrder_真实happy_path 长期报"库存不足"，没人发现是因为
+// 很少有人真的单独重跑 test-cross），已记入 field-tested-pitfalls-log.md。
+func realDB(t *testing.T) *sql.DB {
+	t.Helper()
+	dsn := os.Getenv("REAL_PG_DSN")
+	if dsn == "" {
+		t.Skip("未设置 REAL_PG_DSN，跳过（需要指向真实依赖容器所在的物理数据库，见 infra/scripts/test-cross.sh）")
 	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -133,9 +157,16 @@ func createRealProduct(t *testing.T, ctx context.Context) string {
 // 各自独立的进程、各自独立的代码，erp-sales 从未 import 过 erp-inventory
 // 的任何 Go 包（同 repo.go 里其余测试直接写 erp_sales 自己 schema 的
 // 既有判据，这里只是把 schema/role 换成了 erp_inventory）。
-func receiveRealStock(t *testing.T, ctx context.Context, db *sql.DB, productID, qty string) {
+//
+// ⚠️ 真实踩过的坑：这两个函数的 db 参数曾经传的是 testDB(t)
+// （TEST_PG_DSN/brickkit_test_db）——但"供后续真实 Reserve 调用去读写"
+// 这句话里的"真实 Reserve 调用"，打的是真实在跑的 erp-inventory
+// 容器，它读写的是 brickkit_db（总纲"测试库与演示库分开"，两者物理
+// 隔离），写进 brickkit_test_db 的库存它永远看不到。必须传 realDB(t)
+// （REAL_PG_DSN），不能跟 erp-sales 自己状态用的 testDB(t) 混用。
+func receiveRealStock(t *testing.T, ctx context.Context, realDB *sql.DB, productID, qty string) {
 	t.Helper()
-	err := besdk.WithTx(ctx, db, "erp_inventory_rw", "erp_inventory", func(tx *sql.Tx) error {
+	err := besdk.WithTx(ctx, realDB, "erp_inventory_rw", "erp_inventory", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO inventory_balances (product_id, warehouse_id, on_hand_qty)
 			VALUES ($1, $2, 0) ON CONFLICT (product_id, warehouse_id) DO NOTHING`,
@@ -164,10 +195,10 @@ type realBalance struct {
 	ReservedQty string
 }
 
-func getRealBalance(t *testing.T, ctx context.Context, db *sql.DB, productID string) realBalance {
+func getRealBalance(t *testing.T, ctx context.Context, realDB *sql.DB, productID string) realBalance {
 	t.Helper()
 	var b realBalance
-	err := besdk.WithTx(ctx, db, "erp_inventory_rw", "erp_inventory", func(tx *sql.Tx) error {
+	err := besdk.WithTx(ctx, realDB, "erp_inventory_rw", "erp_inventory", func(tx *sql.Tx) error {
 		row := tx.QueryRowContext(ctx, `
 			SELECT on_hand_qty::text, reserved_qty::text FROM inventory_balances
 			WHERE product_id = $1 AND warehouse_id = $2`, productID, testWarehouseID)
@@ -233,15 +264,16 @@ func createDraftOrder(t *testing.T, ctx context.Context, orch *Orchestrator, cus
 func TestConfirmOrder_真实happy_path(t *testing.T) {
 	requireE2EEnv(t)
 	db := testDB(t)
+	rdb := realDB(t)
 	ctx := e2eTestCtx()
 	orch := newTestOrchestrator(db, 5*time.Second)
 
 	customerID := createRealCustomer(t, ctx, "100000.00")
 	seedCustomerSnapshot(t, db, customerID, "100000.00")
 	productID := createRealProduct(t, ctx)
-	receiveRealStock(t, ctx, db, productID, "50")
+	receiveRealStock(t, ctx, rdb, productID, "50")
 
-	before := getRealBalance(t, ctx, db, productID)
+	before := getRealBalance(t, ctx, rdb, productID)
 
 	order := createDraftOrder(t, ctx, orch, customerID, productID, "3")
 	confirmed, err := orch.ConfirmOrder(ctx, order.ID, uniqueSuffix("test-confirm"), slog.Default())
@@ -256,7 +288,7 @@ func TestConfirmOrder_真实happy_path(t *testing.T) {
 	}
 
 	// 断言库存真的被占住了——不是订单侧自己说了算，查依赖组件的真实状态。
-	after := getRealBalance(t, ctx, db, productID)
+	after := getRealBalance(t, ctx, rdb, productID)
 	beforeReserved, _ := strconv.ParseFloat(before.ReservedQty, 64)
 	afterReserved, _ := strconv.ParseFloat(after.ReservedQty, 64)
 	if afterReserved-beforeReserved != 3 {
@@ -272,6 +304,7 @@ func TestConfirmOrder_真实happy_path(t *testing.T) {
 func TestConfirmOrder_真实库存不足(t *testing.T) {
 	requireE2EEnv(t)
 	db := testDB(t)
+	rdb := realDB(t)
 	ctx := e2eTestCtx()
 	orch := newTestOrchestrator(db, 5*time.Second)
 
@@ -282,9 +315,9 @@ func TestConfirmOrder_真实库存不足(t *testing.T) {
 	// 错误的原因通过（同 happy_path 测试踩过的同一个坑）。
 	seedCustomerSnapshot(t, db, customerID, "100000.00")
 	productID := createRealProduct(t, ctx)
-	receiveRealStock(t, ctx, db, productID, "2") // 只入 2 件
+	receiveRealStock(t, ctx, rdb, productID, "2") // 只入 2 件
 
-	before := getRealBalance(t, ctx, db, productID)
+	before := getRealBalance(t, ctx, rdb, productID)
 
 	order := createDraftOrder(t, ctx, orch, customerID, productID, "999") // 要 999 件，明显不够
 	_, err := orch.ConfirmOrder(ctx, order.ID, uniqueSuffix("test-confirm-insufficient"), slog.Default())
@@ -309,7 +342,7 @@ func TestConfirmOrder_真实库存不足(t *testing.T) {
 
 	// 库存确实没被占住——Reserve 请求整个失败，erp-inventory 自己的条件
 	// 更新连一件都不会加（设计计划 §2.2：判定与加锁是同一条语句）。
-	after := getRealBalance(t, ctx, db, productID)
+	after := getRealBalance(t, ctx, rdb, productID)
 	if after.ReservedQty != before.ReservedQty {
 		t.Fatalf("库存不足的 Reserve 不该留下任何占用，before=%s after=%s", before.ReservedQty, after.ReservedQty)
 	}
@@ -334,10 +367,11 @@ func TestConfirmOrder_真实库存不足(t *testing.T) {
 func TestResolveAfterTimeout_真实查到RESERVED(t *testing.T) {
 	requireE2EEnv(t)
 	db := testDB(t)
+	rdb := realDB(t)
 	ctx := context.Background()
 
 	productID := createRealProduct(t, ctx)
-	receiveRealStock(t, ctx, db, productID, "20")
+	receiveRealStock(t, ctx, rdb, productID, "20")
 
 	orchNormal := newTestOrchestrator(db, 5*time.Second)
 	invConn, closeInv, err := client.Inventory(ctx)
@@ -383,10 +417,11 @@ func TestResolveAfterTimeout_真实查到RESERVED(t *testing.T) {
 func TestReserve_真实超时能自我恢复不panic不出假结果(t *testing.T) {
 	requireE2EEnv(t)
 	db := testDB(t)
+	rdb := realDB(t)
 	ctx := context.Background()
 
 	productID := createRealProduct(t, ctx)
-	receiveRealStock(t, ctx, db, productID, "20")
+	receiveRealStock(t, ctx, rdb, productID, "20")
 
 	invConn, closeInv, err := client.Inventory(ctx)
 	if err != nil {
@@ -472,12 +507,13 @@ func TestResolveAfterTimeout_查询也超时时写入对账队列(t *testing.T) 
 func TestCompensateReserve_真实释放预留且累加补偿计数(t *testing.T) {
 	requireE2EEnv(t)
 	db := testDB(t)
+	rdb := realDB(t)
 	ctx := context.Background()
 	r := repo.New(db, "erp_sales_rw", "erp_sales")
 
 	productID := createRealProduct(t, ctx)
-	receiveRealStock(t, ctx, db, productID, "20")
-	before := getRealBalance(t, ctx, db, productID)
+	receiveRealStock(t, ctx, rdb, productID, "20")
+	before := getRealBalance(t, ctx, rdb, productID)
 
 	order, err := r.CreateOrder(ctx, repo.CreateOrderInput{
 		IdempotencyKey: uniqueSuffix("compensate-order"), CustomerID: "C-compensate", CustomerName: "补偿测试客户",
@@ -501,7 +537,7 @@ func TestCompensateReserve_真实释放预留且累加补偿计数(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	afterReserve := getRealBalance(t, ctx, db, productID)
+	afterReserve := getRealBalance(t, ctx, rdb, productID)
 	beforeReserved, _ := strconv.ParseFloat(before.ReservedQty, 64)
 	afterReserveReserved, _ := strconv.ParseFloat(afterReserve.ReservedQty, 64)
 	if afterReserveReserved-beforeReserved != 4 {
@@ -512,7 +548,7 @@ func TestCompensateReserve_真实释放预留且累加补偿计数(t *testing.T)
 	orch.compensateReserve(ctx, invConn, order.ID, uniqueSuffix("compensate-cancel"), reservationID, slog.Default())
 
 	// 断言库存真的被释放回去了——查依赖组件的真实余额。
-	after := getRealBalance(t, ctx, db, productID)
+	after := getRealBalance(t, ctx, rdb, productID)
 	afterReserved, _ := strconv.ParseFloat(after.ReservedQty, 64)
 	if afterReserved != beforeReserved {
 		t.Fatalf("补偿后 reserved_qty 应该回到补偿前的水平，期望 %v，实际 %v", beforeReserved, afterReserved)
