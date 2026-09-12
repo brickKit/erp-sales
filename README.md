@@ -23,13 +23,50 @@
 不需要手动排序，但单独跑本组件做开发时要记得这四个也要在）。
 
 ## 怎么起来
-（Task 17 实现完成后补：装配路径 + 单独跑的完整命令）
+
+```bash
+# 装配仓库根目录
+make up
+cd components/erp/sales
+go build -o build/migrate ./backend/cmd/migrate
+PG_SCHEMA=erp_sales DATABASE_HOST=localhost DATABASE_PORT=5432 \
+  DATABASE_USER=postgres DATABASE_PASSWORD=<.env 里的 POSTGRES_PASSWORD> DATABASE_NAME=brickkit_db \
+  ./build/migrate up
+go run ./backend/cmd/server     # 单独跑：besdk.RunStandalone 读 component.yaml 的端口
+```
+
+⚠️ 本组件是全阶段二**唯一**有强依赖的组件——单独跑起来做开发时，`mdm-customer`/`mdm-product`/`erp-inventory`/`erp-finance` 四个也要先起来。
+
+或者用平台：`brickkit up`（装配仓库根目录，`components/erp/sales` 登记为 submodule 且在 `brickkit.yaml` 里之后，会按拓扑顺序自动处理依赖）。也可以直接 `make seed`——独立的订单演示数据（不同状态、不同归属都有覆盖）。
 
 ## 怎么用
-（Task 17 后补：一条 curl + 一条 grpcurl）
+
+```bash
+# 建一张草稿订单（REST，人类操作；不预留库存）
+curl -X POST -H 'Authorization: Bearer <应用 token>' -H 'Content-Type: application/json' \
+  -d '{"idempotency_key":"order-demo-1","customer_id":"1","items":[{"product_id":"1","qty":"5"}]}' \
+  http://localhost:8084/erp/sales/orders
+
+# 确认订单（TCC 链：校验客户/产品 → 信用额度预判 → Reserve 库存 → 建单+发事件）
+curl -X POST -H 'Authorization: Bearer <应用 token>' \
+  http://localhost:8084/erp/sales/orders/1/confirm
+
+# 试算价格（前端下单页实时试算，纯函数不落库，前端/BFF 严禁自己算钱）
+curl -X POST -H 'Authorization: Bearer <应用 token>' -H 'Content-Type: application/json' \
+  -d '{"customer_id":"1","items":[{"product_id":"1","qty":"5"}]}' \
+  http://localhost:8084/erp/sales/price/dry-run
+```
 
 ## 配置项
-（Task 16 写完 component.yaml 后补，平台注入的保留变量单列一段）
+
+| 配置键 | 默认值 | 说明 |
+|---|---|---|
+| `pgSchema` | `erp_sales` | 本组件的 PG schema |
+| `otelBaseUrl` | `""` | 空 = Blackhole Exporter，零成本 |
+| `iamJwksUrl` | `""` | JWT 本地验签的公钥来源，指向 `infra-iam-casdoor` |
+| `authzBundleUrl` | `""` | 权限判定的 bundle 轮询地址，指向 `infra-authz` |
+| `defaultWarehouseId` | 必填，无默认值 | `ConfirmOrder` 发起 `Reserve` 时统一用这一个仓库——阶段二没有多仓选货逻辑 |
+| `exceptionAssigneeSub` | `""` | 补偿连续失败 3 次时建的 `infra-workflow` 异常待办分配给谁；留空 = 跳过建待办，只打日志 |
 
 ## 参考实现
 | 项目 | 看的模块 | 借鉴了什么 | 许可证（已复核） | 用法 |

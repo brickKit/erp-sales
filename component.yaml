@@ -4,7 +4,13 @@ kind: Component
 metadata:
   id: erp/sales                      # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
   name: 销售管理
-  version: 1.0.15                    # 精确版本，不接受 ^ / ~ / latest
+  version: 1.0.16                    # 精确版本，不接受 ^ / ~ / latest
+    # v1.0.16：补齐 README.md 的"怎么起来"/"怎么用"/"配置项"三节——建
+    # 仓库时留的占位符一直没人回来填，`make docs-check` 的占位符检测
+    # 正则同时修正（原来只查 TBD/TODO/待补，没覆盖实际用的"后补"措辞）。
+    # 依赖版本号同步跟进 mdm/product@1.0.6、erp/inventory@1.0.11、
+    # erp/finance@1.0.7（三者同一批补 README，同样是纯文档修复）。
+    # 无破坏性变更。
     # v1.0.15：新增 make seed（从零设计——此前订单数据完全来自
     # crm-opportunity 的 WON 联带效果，本组件其实有完整 REST 面，
     # POST /orders 等都是真实人类操作不是组件间协议，值得有自己独立的
@@ -95,9 +101,9 @@ artifacts:
 dependencies:
   components:
     - mdm/customer@1.0.5
-    - mdm/product@1.0.5
-    - erp/inventory@1.0.10
-    - erp/finance@1.0.6
+    - mdm/product@1.0.6
+    - erp/inventory@1.0.11
+    - erp/finance@1.0.7
     - { id: infra/workflow@1.0.2, optional: true }
   resources:
     # ⚠️ engine 逐字参与匹配（设计书 §2.7.3.1）：这里写的词必须与
@@ -134,7 +140,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/erp-sales:1.0.15
+  image: brickenterprise/erp-sales:1.0.16
   port: 8084                         # 端口册 registry/ports.tsv
   extraPorts:
     - { name: grpc, port: 9094 }     # → ERP_SALES_GRPC_ENDPOINT（值仍以 http:// 开头）
