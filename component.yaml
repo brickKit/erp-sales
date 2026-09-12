@@ -4,7 +4,17 @@ kind: Component
 metadata:
   id: erp/sales                      # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
   name: 销售管理
-  version: 1.0.14                    # 精确版本，不接受 ^ / ~ / latest
+  version: 1.0.15                    # 精确版本，不接受 ^ / ~ / latest
+    # v1.0.15：新增 make seed（从零设计——此前订单数据完全来自
+    # crm-opportunity 的 WON 联带效果，本组件其实有完整 REST 面，
+    # POST /orders 等都是真实人类操作不是组件间协议，值得有自己独立的
+    # 演示数据）。dev.superuser 建 3 条（CONFIRMED/SHIPPED/CANCELLED），
+    # dev.sales.east 建 2 条（DRAFT/CONFIRMED），org 维数据样本不再只靠
+    # crm-opportunity 联带的那一两条订单撑着。COMPLETED/CLOSED/
+    # SUSPENDED 三态不种：前两个本阶段没有对应命令，SUSPENDED 只在
+    # 故障注入路径下出现，已有自动化测试覆盖。依赖版本号同步跟进
+    # mdm/customer@1.0.5、mdm/product@1.0.5、erp/inventory@1.0.10、
+    # erp/finance@1.0.6（种子数据丰富度批量整改），无破坏性变更。
     # v1.0.14：依赖版本号同步跟进 erp/inventory@1.0.9（seed.sh 探测式
     # 关联的 idempotency_key 改用真实产品 id，无破坏性变更），
     # dependency-version-scan 真机抓到的连锁漂移。
@@ -84,10 +94,10 @@ artifacts:
 # 的天然测试场景（设计计划 §5）。
 dependencies:
   components:
-    - mdm/customer@1.0.4
-    - mdm/product@1.0.4
-    - erp/inventory@1.0.9
-    - erp/finance@1.0.5
+    - mdm/customer@1.0.5
+    - mdm/product@1.0.5
+    - erp/inventory@1.0.10
+    - erp/finance@1.0.6
     - { id: infra/workflow@1.0.2, optional: true }
   resources:
     # ⚠️ engine 逐字参与匹配（设计书 §2.7.3.1）：这里写的词必须与
@@ -124,7 +134,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/erp-sales:1.0.14
+  image: brickenterprise/erp-sales:1.0.15
   port: 8084                         # 端口册 registry/ports.tsv
   extraPorts:
     - { name: grpc, port: 9094 }     # → ERP_SALES_GRPC_ENDPOINT（值仍以 http:// 开头）
