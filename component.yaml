@@ -4,7 +4,15 @@ kind: Component
 metadata:
   id: erp/sales                      # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
   name: 销售管理
-  version: 1.0.17                    # 精确版本，不接受 ^ / ~ / latest
+  version: 1.0.18                    # 精确版本，不接受 ^ / ~ / latest
+    # v1.0.18：消费者测试改用测试私有 subject（`testSubject()`），不再
+    # 直接订阅/发布生产 subject 字面量——04-testing-standard.md §3.4
+    # 第一条要求，系统排查测试完整性时发现全项目只有 infra-notification
+    # 落地过这条，本组件与 erp-inventory/erp-finance/
+    # integration-im-dingtalk 同一批补齐（field-tested-pitfalls-log.md
+    # 类别 E 的 E2）。依赖版本号同步跟进 erp/inventory@1.0.13、
+    # erp/finance@1.0.9（两者同一批补消费者测试 subject）。纯测试基础
+    # 设施修复，无行为/契约变更。
     # v1.0.17：补 TestProperty_订单状态机不允许法外转移/
     # TestProperty_CreateOrder并发同key仅执行一次——04-testing-standard.md
     # §3.2 对"核心交易类组件"的强制要求（L2 必须用属性测试，例子测试
@@ -114,8 +122,8 @@ dependencies:
   components:
     - mdm/customer@1.0.5
     - mdm/product@1.0.6
-    - erp/inventory@1.0.12
-    - erp/finance@1.0.8
+    - erp/inventory@1.0.13
+    - erp/finance@1.0.9
     - { id: infra/workflow@1.0.2, optional: true }
   resources:
     # ⚠️ engine 逐字参与匹配（设计书 §2.7.3.1）：这里写的词必须与
@@ -152,7 +160,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/erp-sales:1.0.17
+  image: brickenterprise/erp-sales:1.0.18
   port: 8084                         # 端口册 registry/ports.tsv
   extraPorts:
     - { name: grpc, port: 9094 }     # → ERP_SALES_GRPC_ENDPOINT（值仍以 http:// 开头）

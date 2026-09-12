@@ -37,6 +37,26 @@ func natsURLForTest(t *testing.T) string {
 	return nats.DefaultURL
 }
 
+// testSubject 给消费者测试造一个测试私有的 subject，不直接用生产真实
+// subject。
+//
+// ⚠️ 实测踩坑（docs/dev/field-tested-pitfalls-log.md 类别 E 的 E2）：这几条
+// 测试原来直接订阅/发布到真实 subject（如 "finance.credit.rejected.v1"），
+// 而同一台机器上 `brickkit up` 真实跑着的 erp-sales 容器订阅的是**同一个**
+// subject——NATS 核心发布订阅对同一 subject 的多个订阅者是广播，两边都会
+// 收到测试发布的消息，谁先把 event_inbox 那一行 INSERT 成功谁就真正执行
+// handler，断言读到的可能是真实容器的产出，不是本地被测代码的产出。
+//
+// 换一个测试私有的 subject 就能让真实容器完全收不到——它们只订阅生产
+// subject 字面量，不会去猜一个带随机后缀的名字。这个换法是安全的：
+// besdk.Consume 的 fn 只用 ev.Subject 拼错误信息，不拿它做任何业务判断，
+// 换成任意字符串不影响被测逻辑本身。这条规避法只适用于"测试直接构造/
+// 发布事件"的消费者测试——验证"真的发到了生产 subject 上"这件事本身的
+// 测试必须用真实 subject，不适用这个换法（本文件没有这类测试）。
+func testSubject(base string) string {
+	return fmt.Sprintf("test.%s.%d", base, time.Now().UnixNano())
+}
+
 // publishEvent 的 aggregateID 必须是每次调用都不同的值——besdk.Consume
 // 的 event_inbox 按 (subject, aggregate_id, version) 做单调去重，且这张
 // 表是持久化的（不会在两次 go test 之间清空），同 erp-inventory/
@@ -73,18 +93,19 @@ func TestConsumer_权威额度超限转SUSPENDED(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	subj := testSubject("finance.credit.rejected.v1")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		_ = besdk.Consume(ctx, nc, db, "erp_sales_rw", "erp_sales", "finance.credit.rejected.v1",
+		_ = besdk.Consume(ctx, nc, db, "erp_sales_rw", "erp_sales", subj,
 			creditRejectedHandler())
 		close(done)
 	}()
 	time.Sleep(150 * time.Millisecond)
 
 	payload := fmt.Sprintf(`{"customer_id":"C-x","order_id":%q,"exposure":"90000.00","limit":"50000.00"}`, order.ID)
-	publishEvent(t, nc, "finance.credit.rejected.v1", order.ID, 1, payload)
+	publishEvent(t, nc, subj, order.ID, 1, payload)
 	nc.Flush()
 	time.Sleep(400 * time.Millisecond)
 	cancel()
@@ -113,18 +134,19 @@ func TestConsumer_客户事件维护信用额度快照(t *testing.T) {
 	defer nc.Close()
 
 	customerID := fmt.Sprintf("consumer-snapshot-%d", time.Now().UnixNano())
+	subj := testSubject("mdm.customer.created.v1")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		_ = besdk.Consume(ctx, nc, db, "erp_sales_rw", "erp_sales", "mdm.customer.created.v1",
+		_ = besdk.Consume(ctx, nc, db, "erp_sales_rw", "erp_sales", subj,
 			customerSnapshotHandler())
 		close(done)
 	}()
 	time.Sleep(150 * time.Millisecond)
 
 	payload := fmt.Sprintf(`{"id":%q,"credit_limit":"12345.00"}`, customerID)
-	publishEvent(t, nc, "mdm.customer.created.v1", customerID, 1, payload)
+	publishEvent(t, nc, subj, customerID, 1, payload)
 	nc.Flush()
 	time.Sleep(400 * time.Millisecond)
 	cancel()
@@ -193,11 +215,12 @@ func TestConsumer_补偿异常待办完成后恢复订单(t *testing.T) {
 	r := repo.New(db, "erp_sales_rw", "erp_sales")
 	order := createSuspendedOrderForConsumerTest(t, r)
 
+	subj := testSubject("infra.workflow.task.completed.v1")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		_ = besdk.Consume(ctx, nc, db, "erp_sales_rw", "erp_sales", "infra.workflow.task.completed.v1",
+		_ = besdk.Consume(ctx, nc, db, "erp_sales_rw", "erp_sales", subj,
 			workflowTaskCompletedHandler())
 		close(done)
 	}()
@@ -213,7 +236,7 @@ func TestConsumer_补偿异常待办完成后恢复订单(t *testing.T) {
 	payload := fmt.Sprintf(
 		`{"task_id":%q,"action":"APPROVED","actor_sub":"u_reviewer","comment":"已人工处理",`+
 			`"source_component":"erp/sales","source_aggregate":"sales_order","source_id":%q}`, taskID, order.ID)
-	publishEvent(t, nc, "infra.workflow.task.completed.v1", order.ID, 1, payload)
+	publishEvent(t, nc, subj, order.ID, 1, payload)
 	nc.Flush()
 	time.Sleep(400 * time.Millisecond)
 	cancel()
@@ -245,11 +268,12 @@ func TestConsumer_workflow事件过滤不属于自己的记录(t *testing.T) {
 	r := repo.New(db, "erp_sales_rw", "erp_sales")
 	order := createSuspendedOrderForConsumerTest(t, r)
 
+	subj := testSubject("infra.workflow.task.completed.v1")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		_ = besdk.Consume(ctx, nc, db, "erp_sales_rw", "erp_sales", "infra.workflow.task.completed.v1",
+		_ = besdk.Consume(ctx, nc, db, "erp_sales_rw", "erp_sales", subj,
 			workflowTaskCompletedHandler())
 		close(done)
 	}()
@@ -265,9 +289,9 @@ func TestConsumer_workflow事件过滤不属于自己的记录(t *testing.T) {
 	// aggregate_id 派生自 order.ID（每次运行都不同）+ 固定后缀区分三条，
 	// 同 TestConsumer_补偿异常待办完成后恢复订单 的既有教训：event_inbox
 	// 的去重是持久化的，写死字面量在第二次运行时会被去重表悄悄吞掉。
-	publishEvent(t, nc, "infra.workflow.task.completed.v1", order.ID+"-not-mine-1", 1, notMine)
-	publishEvent(t, nc, "infra.workflow.task.completed.v1", order.ID+"-not-mine-2", 1, wrongAggregate)
-	publishEvent(t, nc, "infra.workflow.task.completed.v1", order.ID+"-not-mine-3", 1, rejected)
+	publishEvent(t, nc, subj, order.ID+"-not-mine-1", 1, notMine)
+	publishEvent(t, nc, subj, order.ID+"-not-mine-2", 1, wrongAggregate)
+	publishEvent(t, nc, subj, order.ID+"-not-mine-3", 1, rejected)
 	nc.Flush()
 	time.Sleep(400 * time.Millisecond)
 	cancel()
