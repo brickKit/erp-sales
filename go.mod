@@ -4,6 +4,10 @@ go 1.25.0
 
 require (
 	github.com/brickKit/be-sdk-go v0.2.4
+	github.com/brickKit/erp-sales/gen/erp/finance v0.0.0
+	github.com/brickKit/erp-sales/gen/erp/inventory v0.0.0
+	github.com/brickKit/erp-sales/gen/mdm/customer v0.0.0
+	github.com/brickKit/erp-sales/gen/mdm/product v0.0.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.10.0
@@ -11,6 +15,26 @@ require (
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
 	pgregory.net/rapid v1.3.0
+)
+
+// gen/erp/finance、gen/erp/inventory、gen/mdm/customer、gen/mdm/product 这四份
+// 是 vendored-contract 只读镜像（§3.1，逐字复制自各自真身仓库），各自独立成
+// go module（不是外部依赖）——理由见阶段四调研记录 04 §13：这四个组件都被分进
+// 了跟本组件同一个外壳（go-core），如果不独立成 module，外壳合并部署时这四份
+// 镜像会和它们各自真身生成的代码在同一个 protobuf 全局注册表里重复注册同一个
+// 文件/类型全名，直接 panic。独立成 module 后，只有外壳自己的 go.mod 会把这
+// 四条 replace 到各自真身，本仓库自己 standalone 构建/测试完全不受影响，继续
+// 用下面这四条本地 replace。
+// ⚠️ gen/infra/workflow 没有做同样处理：它对应的 infra-workflow 被分进了
+// go-infra 外壳（跟本组件不同外壳），当前不会撞车；如果以后外壳分组变了导致
+// 两者同外壳，要照这四条的样子补一份。
+// ⚠️ module 边界都切在 v1 目录的上一级（比如 gen/erp/finance 而不是
+// gen/erp/finance/v1）：Go 模块路径禁止以字面量 `/v1` 结尾。
+replace (
+	github.com/brickKit/erp-sales/gen/erp/finance => ./gen/erp/finance
+	github.com/brickKit/erp-sales/gen/erp/inventory => ./gen/erp/inventory
+	github.com/brickKit/erp-sales/gen/mdm/customer => ./gen/mdm/customer
+	github.com/brickKit/erp-sales/gen/mdm/product => ./gen/mdm/product
 )
 
 require (
