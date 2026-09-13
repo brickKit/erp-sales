@@ -4,7 +4,8 @@ kind: Component
 metadata:
   id: erp/sales                      # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
   name: 销售管理
-  version: 1.0.20                    # 精确版本，不接受 ^ / ~ / latest
+  version: 1.0.21                    # 精确版本，不接受 ^ / ~ / latest
+                                     # v1.0.21：铁律六新增第二类白名单（生成物契约包 gen/<domain>/<name>，与 be-sdk-* 同类，设计书§13.3）——本组件不再 vendor 一份 erp-finance/erp-inventory/ mdm-customer/mdm-product 的生成代码副本，改成直接 import 它们各自发布的真身 gen/ 包。原因：上一版（v1.0.20）尝试的"嵌套 go module + 外壳 replace 去重"经真机测试证明技术上不可行——Go module 系统无法把两个不同 import path 的包合并成一份编译实例，即使 replace 也不行，外壳合并部署时 protobuf 全局注册表撞车的 panic 原样复现（阶段四调研记录 04 §13 有完整推演+最小复现）。这次改动删掉 contracts/vendor/{erp/finance,erp/inventory, mdm/customer,mdm/product} 与 gen/ 下对应的四份镜像，5 处 import 语句改指真身包（别名不变，业务代码零改动），import-scan 门禁新增放行 github.com/brickKit/<repo>/gen/... 这个形状。gen/infra/workflow（vendor 的第五份，跟本组件不同外壳，当前不撞车）保持原样，留给下次触及时再改。 contract-check 的 buf breaking 范围收紧到只查 contracts/erp、 contracts/events（不含 contracts/vendor 只读镜像——这个意图本来就写在注释里，只是命令一直没真的照做，这次一并修正）。gRPC 调用行为、契约面、业务逻辑均无变化，import-scan/单测/contract-check 全绿。
                                      # v1.0.20：本组件 vendor 的四份契约只读镜像（gen/erp/finance、gen/erp/inventory、 gen/mdm/customer、gen/mdm/product——vendored-contract 模式，设计计划§9）各自拆成独立嵌套 go module，各用一条本地 replace 指回自己（module 边界切在 v1 目录上一级，理由同上）。这是外壳合并部署能把这四份镜像去重指向各自真身的前提（阶段四调研记录 04 §13）——本仓库自己 standalone 构建/测试完全不受影响，import-scan/单测全绿。gen/erp/sales/v1（自己的契约）与 gen/infra/workflow（vendor 的第五份，当前跟本组件不同外壳，不撞车）都没有改动。无业务行为/契约变更。
                                      # v1.0.19：修复跨组件真故障注入测试的物理库目标错误——receiveRealStock/getRealBalance 曾经把库存直接写进 TEST_PG_DSN（brickkit_test_db），但 test-cross 桥接的真实 erp-inventory 容器读写的是 brickkit_db（测试库与演示库物理分开后两者不再是同一个库），导致 TestConfirmOrder_真实happy_path/TestHandleOpportunityWon_真实建单确认成功等阶段三 Task 14 的核心 TCC/赢单测试长期报"库存不足"，是阶段三收尾排查时才发现的真实回归（业务能力本身没坏，只是这条自动化回归测试失效了）。新增 REAL_PG_DSN 环境变量（test-cross.sh 提供），两个辅助函数改成对它读写，不再跟 erp-sales 自己状态用的 TEST_PG_DSN 混用。纯测试修复，无行为/契约变更。
     # v1.0.18：消费者测试改用测试私有 subject（`testSubject()`），不再
@@ -162,7 +163,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/erp-sales:1.0.20
+  image: brickenterprise/erp-sales:1.0.21
   port: 8084                         # 端口册 registry/ports.tsv
   extraPorts:
     - { name: grpc, port: 9094 }     # → ERP_SALES_GRPC_ENDPOINT（值仍以 http:// 开头）

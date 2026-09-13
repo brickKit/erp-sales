@@ -24,8 +24,8 @@ import (
 	"github.com/brickKit/erp-sales/backend/internal/repo"
 
 	workflowv1 "github.com/brickKit/erp-sales/gen/infra/workflow/v1"
-	customerv1 "github.com/brickKit/erp-sales/gen/mdm/customer/v1"
-	productv1 "github.com/brickKit/erp-sales/gen/mdm/product/v1"
+	customerv1 "github.com/brickKit/mdm-customer/gen/mdm/customer/v1"
+	productv1 "github.com/brickKit/mdm-product/gen/mdm/product/v1"
 )
 
 // OpportunityWonItem 对应 crm.opportunity.won.v1 payload 的 items[] 一项。

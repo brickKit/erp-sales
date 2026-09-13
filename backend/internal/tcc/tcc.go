@@ -22,9 +22,9 @@ import (
 	"github.com/brickKit/erp-sales/backend/internal/client"
 	"github.com/brickKit/erp-sales/backend/internal/repo"
 
-	inventoryv1 "github.com/brickKit/erp-sales/gen/erp/inventory/v1"
-	customerv1 "github.com/brickKit/erp-sales/gen/mdm/customer/v1"
-	productv1 "github.com/brickKit/erp-sales/gen/mdm/product/v1"
+	inventoryv1 "github.com/brickKit/erp-inventory/gen/erp/inventory/v1"
+	customerv1 "github.com/brickKit/mdm-customer/gen/mdm/customer/v1"
+	productv1 "github.com/brickKit/mdm-product/gen/mdm/product/v1"
 )
 
 // errReservePending 是"预留状态未知/未提交，稍后重试或等对账兜底"的

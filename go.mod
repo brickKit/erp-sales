@@ -4,10 +4,10 @@ go 1.25.0
 
 require (
 	github.com/brickKit/be-sdk-go v0.2.4
-	github.com/brickKit/erp-sales/gen/erp/finance v0.0.0
-	github.com/brickKit/erp-sales/gen/erp/inventory v0.0.0
-	github.com/brickKit/erp-sales/gen/mdm/customer v0.0.0
-	github.com/brickKit/erp-sales/gen/mdm/product v0.0.0
+	github.com/brickKit/erp-finance/gen/erp/finance v1.0.10
+	github.com/brickKit/erp-inventory/gen/erp/inventory v1.0.14
+	github.com/brickKit/mdm-customer/gen/mdm/customer v1.0.6
+	github.com/brickKit/mdm-product/gen/mdm/product v1.0.7
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.10.0
@@ -17,25 +17,22 @@ require (
 	pgregory.net/rapid v1.3.0
 )
 
-// gen/erp/finance、gen/erp/inventory、gen/mdm/customer、gen/mdm/product 这四份
-// 是 vendored-contract 只读镜像（§3.1，逐字复制自各自真身仓库），各自独立成
-// go module（不是外部依赖）——理由见阶段四调研记录 04 §13：这四个组件都被分进
-// 了跟本组件同一个外壳（go-core），如果不独立成 module，外壳合并部署时这四份
-// 镜像会和它们各自真身生成的代码在同一个 protobuf 全局注册表里重复注册同一个
-// 文件/类型全名，直接 panic。独立成 module 后，只有外壳自己的 go.mod 会把这
-// 四条 replace 到各自真身，本仓库自己 standalone 构建/测试完全不受影响，继续
-// 用下面这四条本地 replace。
-// ⚠️ gen/infra/workflow 没有做同样处理：它对应的 infra-workflow 被分进了
-// go-infra 外壳（跟本组件不同外壳），当前不会撞车；如果以后外壳分组变了导致
-// 两者同外壳，要照这四条的样子补一份。
-// ⚠️ module 边界都切在 v1 目录的上一级（比如 gen/erp/finance 而不是
-// gen/erp/finance/v1）：Go 模块路径禁止以字面量 `/v1` 结尾。
-replace (
-	github.com/brickKit/erp-sales/gen/erp/finance => ./gen/erp/finance
-	github.com/brickKit/erp-sales/gen/erp/inventory => ./gen/erp/inventory
-	github.com/brickKit/erp-sales/gen/mdm/customer => ./gen/mdm/customer
-	github.com/brickKit/erp-sales/gen/mdm/product => ./gen/mdm/product
-)
+// erp-finance/gen/erp/finance、erp-inventory/gen/erp/inventory、
+// mdm-customer/gen/mdm/customer、mdm-product/gen/mdm/product 这四条是各自
+// 组件真身发布的生成物契约包（铁律六第二类白名单，设计书 §13.3、`make
+// import-scan` 放行 github.com/brickKit/<repo>/gen/... 这个形状），本组件
+// 直接 import——不再逐字复制一份放进自己仓库的 contracts/vendor/。
+//
+// 阶段四曾经先试过"本组件自己 vendor 一份 + 外壳用 replace 去重"，发现
+// Go module 系统没法把两个不同 import path 合并成一份编译实例：即使
+// replace A => B，A 和 B 依然是两个独立的包，各自的 init() 都会往
+// protobuf 全局注册表注册一次同一个文件/类型全名，第二次直接 panic
+// （阶段四调研记录 04 §13 有完整推演，含最小复现）。真正的解法是这四条
+// 直接 import 真身，不留镜像，从根上让"只有一份编译实例"这件事物理成立。
+//
+// gen/infra/workflow 保留原来的 vendored-contract 镜像模式：infra-workflow
+// 被分进了 go-infra 外壳（跟本组件不同外壳），当前不会撞车，留给下一次
+// 触及这份契约时按同样的判据顺手改掉，不是遗漏。
 
 require (
 	github.com/MicahParks/jwkset v0.11.3 // indirect

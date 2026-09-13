@@ -49,18 +49,33 @@ dag-check:  ## 强依赖图无环（§4.2）。本组件是阶段二唯一有强
 
 contract-check:  ## 禁破坏性变更（§8.5、决策 33）。只对本组件自己的契约较真，不含 contracts/vendor 只读镜像
 	buf lint
-	buf breaking --against '.git#branch=main'
+	@# ⚠️ 必须显式列出 contracts/ 下"本组件自己契约"的子目录（不能直接
+	@# --path contracts，buf 会拒绝"module 路径不能用 --path 指定，请直接
+	@# 当 input 传"；也不能反过来 --exclude-path contracts/vendor，同样
+	@# 因为它自己就是 buf.yaml 里声明的一个独立 module，buf 不允许用
+	@# --exclude-path 排除一整个 module）——contracts/vendor 是别的组件
+	@# 真身契约的只读镜像，会不会"破坏性变更"由真身自己的 contract-check
+	@# 管，不该被这里拦（本组件从 vendor 改成直接 import 真身的 gen/ 包
+	@# 时，就整块删过四份镜像文件，见阶段四调研记录 04 §13）。新增
+	@# contracts/ 下的子目录（vendor 除外）时要记得把新目录也加进这个
+	@# 列表。
+	buf breaking --against '.git#branch=main' --path contracts/erp --path contracts/events
 
 import-scan:  ## 铁律六：不许 import 任何其他组件仓库（§13.3）
-	@# ⚠️ contracts/vendor/ 的只读镜像 buf generate 到 gen/ 时物理落在
-	@# github.com/brickKit/erp-sales/gen/... 下（本组件自己的模块路径，
-	@# 见 docs/design/erp-sales.md §9 的 vendored-contract 判据）——它们
-	@# 天然匹配下面的白名单前缀，不需要特殊排除。
+	@# ⚠️ 第二类白名单：github.com/brickKit/<repo>/gen/... 是任意组件自己
+	@# 发布的生成物契约包（纯 protoc-gen-go/-grpc 产出，无业务逻辑）——
+	@# 阶段四发现同一外壳内合并部署时，逐字复制一份别的组件生成代码
+	@# （vendored-contract）会在 protobuf 全局注册表里撞车，Go 的 module
+	@# system 没有别的办法去重，只能改成直接 import 真身（决策见设计书
+	@# §13.3 铁律六新增说明、阶段四调研记录 04 §13）。本组件已经从 vendor
+	@# 自己的镜像改成直接 import erp-finance/erp-inventory/mdm-customer/
+	@# mdm-product 各自的 gen/ 包。
 	@bad="$$(go list -deps ./... 2>/dev/null | grep -E '^github.com/brickKit/' \
-	         | grep -vE '^github.com/brickKit/(erp-sales|be-sdk-go)(/|$$)' || true)"; \
+	         | grep -vE '^github.com/brickKit/(erp-sales|be-sdk-go)(/|$$)' \
+	         | grep -vE '^github.com/brickKit/[^/]+/gen/' || true)"; \
 	 if [ -n "$$bad" ]; then \
 	   echo "✗ 铁律六违规，import 了其他组件仓库："; echo "$$bad"; exit 1; fi; \
-	 echo "✓ 无组件间 import（含四份 vendor 镜像生成的 stub 在内）"
+	 echo "✓ 无组件间 import（含直接 import 的四个真身 gen/ 契约包 + 1 份 infra/workflow vendor 镜像的 stub 在内）"
 
 module-check:  ## 铁律七：模块能被合进外壳（§12.5、§13.3 铁律七）
 	@# 同 erp-finance 既有判据：只扫 backend/module 与 backend/internal，

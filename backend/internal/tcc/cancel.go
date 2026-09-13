@@ -7,7 +7,7 @@ import (
 	"github.com/brickKit/erp-sales/backend/internal/client"
 	"github.com/brickKit/erp-sales/backend/internal/repo"
 
-	inventoryv1 "github.com/brickKit/erp-sales/gen/erp/inventory/v1"
+	inventoryv1 "github.com/brickKit/erp-inventory/gen/erp/inventory/v1"
 )
 
 // CancelOrder 释放预留（如果有）+ 落库 + 发事件（设计计划 §3 契约面）。

@@ -7,7 +7,7 @@ import (
 	"github.com/brickKit/erp-sales/backend/internal/client"
 	"github.com/brickKit/erp-sales/backend/internal/repo"
 
-	inventoryv1 "github.com/brickKit/erp-sales/gen/erp/inventory/v1"
+	inventoryv1 "github.com/brickKit/erp-inventory/gen/erp/inventory/v1"
 )
 
 // ShipOrder 预留转实际出库（调 erp-inventory.ConfirmIssue），只有

@@ -30,8 +30,8 @@ import (
 	"github.com/brickKit/erp-sales/backend/internal/repo"
 
 	workflowv1 "github.com/brickKit/erp-sales/gen/infra/workflow/v1"
-	customerv1 "github.com/brickKit/erp-sales/gen/mdm/customer/v1"
-	productv1 "github.com/brickKit/erp-sales/gen/mdm/product/v1"
+	customerv1 "github.com/brickKit/mdm-customer/gen/mdm/customer/v1"
+	productv1 "github.com/brickKit/mdm-product/gen/mdm/product/v1"
 )
 
 const testWarehouseID = "1" // WH-EAST，迁移播种数据（同 erp-inventory 设计计划 §9 第 5 条）
