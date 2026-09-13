@@ -14,6 +14,8 @@ github.com/brickKit/erp-finance/gen/erp/finance v1.0.10 h1:LjYhBOMSiFRV+/C8X/WtA
 github.com/brickKit/erp-finance/gen/erp/finance v1.0.10/go.mod h1:mnqF5dLAnLVjdTqsbsdj6S+vtahwe4sVcoxlwHHYC/s=
 github.com/brickKit/erp-inventory/gen/erp/inventory v1.0.14 h1:gLRSRZH1oFMJBBESLTDY11lXUHf7hH8Gk7svzDr2lNA=
 github.com/brickKit/erp-inventory/gen/erp/inventory v1.0.14/go.mod h1:7b7e6lJlPI4UV1Xq4CgMQzTJf0xflfk9nJj9a8iH0+s=
+github.com/brickKit/infra-workflow/gen/infra/workflow v1.0.3 h1:Z5aeqcvazYdxh1wsxp9hBEQ4CMVj/i+0dmNEjcU/a/A=
+github.com/brickKit/infra-workflow/gen/infra/workflow v1.0.3/go.mod h1:GGdneZQeN8oKm1x/3nLjIzJNBXxaG5b2CEu400CMH2k=
 github.com/brickKit/mdm-customer/gen/mdm/customer v1.0.6 h1:R8E9q/FbrtVPUTY6REJfLsJETA5vG+7yen5Gd16CusI=
 github.com/brickKit/mdm-customer/gen/mdm/customer v1.0.6/go.mod h1:Dlsy5nV2d2m8NrchYHiwMPhaBxEL2DbaGGQaOY9RlRY=
 github.com/brickKit/mdm-product/gen/mdm/product v1.0.7 h1:9d0vKhnE4Fh2pJh9+IpbYN3u0muESFfVADQXNLERGeU=

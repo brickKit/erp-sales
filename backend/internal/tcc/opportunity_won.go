@@ -23,7 +23,7 @@ import (
 	"github.com/brickKit/erp-sales/backend/internal/client"
 	"github.com/brickKit/erp-sales/backend/internal/repo"
 
-	workflowv1 "github.com/brickKit/erp-sales/gen/infra/workflow/v1"
+	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
 	customerv1 "github.com/brickKit/mdm-customer/gen/mdm/customer/v1"
 	productv1 "github.com/brickKit/mdm-product/gen/mdm/product/v1"
 )

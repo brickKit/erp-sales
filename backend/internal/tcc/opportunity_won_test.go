@@ -17,7 +17,7 @@ import (
 	"github.com/brickKit/erp-sales/backend/internal/client"
 	"github.com/brickKit/erp-sales/backend/internal/repo"
 
-	workflowv1 "github.com/brickKit/erp-sales/gen/infra/workflow/v1"
+	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
 )
 
 func TestHandleOpportunityWon_真实建单确认成功(t *testing.T) {

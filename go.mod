@@ -6,6 +6,7 @@ require (
 	github.com/brickKit/be-sdk-go v0.2.4
 	github.com/brickKit/erp-finance/gen/erp/finance v1.0.10
 	github.com/brickKit/erp-inventory/gen/erp/inventory v1.0.14
+	github.com/brickKit/infra-workflow/gen/infra/workflow v1.0.3
 	github.com/brickKit/mdm-customer/gen/mdm/customer v1.0.6
 	github.com/brickKit/mdm-product/gen/mdm/product v1.0.7
 	github.com/gin-gonic/gin v1.12.0
@@ -18,21 +19,23 @@ require (
 )
 
 // erp-finance/gen/erp/finance、erp-inventory/gen/erp/inventory、
-// mdm-customer/gen/mdm/customer、mdm-product/gen/mdm/product 这四条是各自
-// 组件真身发布的生成物契约包（铁律六第二类白名单，设计书 §13.3、`make
-// import-scan` 放行 github.com/brickKit/<repo>/gen/... 这个形状），本组件
-// 直接 import——不再逐字复制一份放进自己仓库的 contracts/vendor/。
+// infra-workflow/gen/infra/workflow、mdm-customer/gen/mdm/customer、
+// mdm-product/gen/mdm/product 这五条是各自组件真身发布的生成物契约包
+// （铁律六第二类白名单，设计书 §13.3、`make import-scan` 放行
+// github.com/brickKit/<repo>/gen/... 这个形状），本组件直接 import——
+// 不再逐字复制一份放进自己仓库的 contracts/vendor/（那个目录已经清空
+// 删除，本组件不再 vendor 任何契约镜像）。
 //
 // 阶段四曾经先试过"本组件自己 vendor 一份 + 外壳用 replace 去重"，发现
 // Go module 系统没法把两个不同 import path 合并成一份编译实例：即使
 // replace A => B，A 和 B 依然是两个独立的包，各自的 init() 都会往
 // protobuf 全局注册表注册一次同一个文件/类型全名，第二次直接 panic
-// （阶段四调研记录 04 §13 有完整推演，含最小复现）。真正的解法是这四条
+// （阶段四调研记录 04 §13 有完整推演，含最小复现）。真正的解法是这五条
 // 直接 import 真身，不留镜像，从根上让"只有一份编译实例"这件事物理成立。
-//
-// gen/infra/workflow 保留原来的 vendored-contract 镜像模式：infra-workflow
-// 被分进了 go-infra 外壳（跟本组件不同外壳），当前不会撞车，留给下一次
-// 触及这份契约时按同样的判据顺手改掉，不是遗漏。
+// infra-workflow 虽然当前跟本组件不同外壳（生产环境不会真的同进程），
+// 但本仓库自己的 shells/go 测试文件把 5 个外壳的真实模块测试放进同一个
+// Go 测试二进制，编译阶段依然会把两份内容相同的生成代码一起链进去，
+// 触发一模一样的撞车，所以这条也一并改掉，不留任何一份镜像。
 
 require (
 	github.com/MicahParks/jwkset v0.11.3 // indirect

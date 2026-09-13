@@ -13,7 +13,7 @@ import (
 	"github.com/brickKit/erp-sales/backend/internal/repo"
 
 	inventoryv1 "github.com/brickKit/erp-inventory/gen/erp/inventory/v1"
-	workflowv1 "github.com/brickKit/erp-sales/gen/infra/workflow/v1"
+	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
 )
 
 // reserveIdemKey 派生库存预留这一步专用的幂等键——与 ConfirmOrder 命令

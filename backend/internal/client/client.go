@@ -32,7 +32,7 @@ import (
 
 	financev1 "github.com/brickKit/erp-finance/gen/erp/finance/v1"
 	inventoryv1 "github.com/brickKit/erp-inventory/gen/erp/inventory/v1"
-	workflowv1 "github.com/brickKit/erp-sales/gen/infra/workflow/v1"
+	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
 	customerv1 "github.com/brickKit/mdm-customer/gen/mdm/customer/v1"
 	productv1 "github.com/brickKit/mdm-product/gen/mdm/product/v1"
 )

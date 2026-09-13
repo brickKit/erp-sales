@@ -28,7 +28,7 @@ import (
 	"github.com/brickKit/erp-sales/backend/internal/repo"
 	"github.com/brickKit/erp-sales/backend/internal/tcc"
 
-	workflowv1 "github.com/brickKit/erp-sales/gen/infra/workflow/v1"
+	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
 )
 
 func requireOpportunityWonDLQEnv(t *testing.T) {
