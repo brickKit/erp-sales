@@ -4,7 +4,8 @@ kind: Component
 metadata:
   id: erp/sales                      # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
   name: 销售管理
-  version: 1.0.23                    # 精确版本，不接受 ^ / ~ / latest
+  version: 1.0.24                    # 精确版本，不接受 ^ / ~ / latest
+                                     # v1.0.24：同 mdm/customer 这次改动，删掉 deployment.labels 的 prometheus.io/port，理由同上。无业务行为/契约变更。
                                      # v1.0.23：依赖版本号同步跟进 erp/finance@1.0.11、erp/inventory@1.0.15、mdm/customer@1.0.7、mdm/product@1.0.8，无破坏性变更。
                                      # v1.0.22：最后一份 vendor 镜像（contracts/vendor/infra/workflow）也改成直接 import infra-workflow 发布的真身 gen/infra/workflow 包——理由与这次 finance/inventory/mdm-customer/mdm-product 四份同批（阶段四调研记录 04 §13）：本组件自己的测试文件把 5 个外壳的真实模块测试放进同一个 Go 测试二进制，即使 infra-workflow 目前分在不同外壳、生产环境不会真的同进程，测试编译阶段依然会把两份内容相同的生成代码一起链进去，触发一模一样的 protobuf 全局注册表撞车。至此本组件 vendor 的全部五份契约镜像都已经改成直接 import 真身，不再保留任何一份逐字复制的镜像代码。gRPC 调用行为、契约面、业务逻辑均无变化，import-scan/单测/contract-check 全绿。
                                      # v1.0.21：铁律六新增第二类白名单（生成物契约包 gen/<domain>/<name>，与 be-sdk-* 同类，设计书§13.3）——本组件不再 vendor 一份 erp-finance/erp-inventory/ mdm-customer/mdm-product 的生成代码副本，改成直接 import 它们各自发布的真身 gen/ 包。原因：上一版（v1.0.20）尝试的"嵌套 go module + 外壳 replace 去重"经真机测试证明技术上不可行——Go module 系统无法把两个不同 import path 的包合并成一份编译实例，即使 replace 也不行，外壳合并部署时 protobuf 全局注册表撞车的 panic 原样复现（阶段四调研记录 04 §13 有完整推演+最小复现）。这次改动删掉 contracts/vendor/{erp/finance,erp/inventory, mdm/customer,mdm/product} 与 gen/ 下对应的四份镜像，5 处 import 语句改指真身包（别名不变，业务代码零改动），import-scan 门禁新增放行 github.com/brickKit/<repo>/gen/... 这个形状。gen/infra/workflow（vendor 的第五份，跟本组件不同外壳，当前不撞车）保持原样，留给下次触及时再改。 contract-check 的 buf breaking 范围收紧到只查 contracts/erp、 contracts/events（不含 contracts/vendor 只读镜像——这个意图本来就写在注释里，只是命令一直没真的照做，这次一并修正）。gRPC 调用行为、契约面、业务逻辑均无变化，import-scan/单测/contract-check 全绿。
@@ -125,11 +126,11 @@ artifacts:
 # 的天然测试场景（设计计划 §5）。
 dependencies:
   components:
-    - mdm/customer@1.0.7
-    - mdm/product@1.0.8
-    - erp/inventory@1.0.15
-    - erp/finance@1.0.11
-    - { id: infra/workflow@1.0.3, optional: true }
+    - mdm/customer@1.0.8
+    - mdm/product@1.0.9
+    - erp/inventory@1.0.16
+    - erp/finance@1.0.12
+    - { id: infra/workflow@1.0.4, optional: true }
   resources:
     # ⚠️ engine 逐字参与匹配（设计书 §2.7.3.1）：这里写的词必须与
     #    brickkit.yaml 的 resources[].engine 完全相同，平台不认别名。
@@ -165,13 +166,20 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/erp-sales:1.0.23
+  image: brickenterprise/erp-sales:1.0.24
   port: 8084                         # 端口册 registry/ports.tsv
   extraPorts:
     - { name: grpc, port: 9094 }     # → ERP_SALES_GRPC_ENDPOINT（值仍以 http:// 开头）
   labels:                            # 平台只搬运，不解释键值。值必须是字符串
     prometheus.io/scrape: "true"
-    prometheus.io/port: "8084"
+    # prometheus.io/port 原来写在这里——阶段四附加 Task 0.1 真机验证
+    # servedBy 时发现这个标签会跟同外壳其它成员的 prometheus.io/port 撞车
+    # 报错（每个组件的值天然不同，servedBy 的 labels 合并规则没有像 env
+    # 变量合并那样排除这类"语义上必然因组件而异"的标签，已反馈给 brickKit，
+    # 见装配仓库 docs/dev/brickKit反馈-servedBy的labels合并漏了排除规则.md）。
+    # 在 brickKit 修复或给出结论之前，暂时从这里删掉，只在合并后的外壳
+    # 自己的条目上保留一份——跟"合并后指标只能走一个共享抓取端口"这个
+    # 事实本来就一致，不是单纯绕过。
     prometheus.io/path: "/metrics"
   resources:
     requests: { cpu: "200m", memory: "256Mi" }  # 唯一的链上一环，TCC 编排比枢纽重一档
