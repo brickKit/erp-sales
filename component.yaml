@@ -4,7 +4,8 @@ kind: Component
 metadata:
   id: erp/sales                      # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
   name: 销售管理
-  version: 1.0.25                    # 精确版本，不接受 ^ / ~ / latest
+  version: 1.0.26                    # 精确版本，不接受 ^ / ~ / latest
+                                     # v1.0.26：同 erp/inventory 这次改动，scripts/seed.sh 改成 source infra/scripts/lib/seed-net.sh（含 with_toolbox/get_app_jwt 多身份换取、idfor 反查客户/产品 id），理由同上。真机跑通 make seed（5 条订单，含 dev.superuser/dev.sales.east 两个身份），无业务行为/契约变更。
                                      # v1.0.25：同上，scripts/seed.sh 的 REST+JWT 换取部分改成工具箱容器 + ServiceName() 地址规则。真机在 servedBy 部署下跑通 make seed（5 条订单，含 dev.superuser/dev.sales.east 两个身份）。无业务行为/契约变更。
                                      # v1.0.24：同 mdm/customer 这次改动，删掉 deployment.labels 的 prometheus.io/port，理由同上。无业务行为/契约变更。
                                      # v1.0.23：依赖版本号同步跟进 erp/finance@1.0.11、erp/inventory@1.0.15、mdm/customer@1.0.7、mdm/product@1.0.8，无破坏性变更。
@@ -127,10 +128,10 @@ artifacts:
 # 的天然测试场景（设计计划 §5）。
 dependencies:
   components:
-    - mdm/customer@1.0.9
-    - mdm/product@1.0.10
-    - erp/inventory@1.0.17
-    - erp/finance@1.0.13
+    - mdm/customer@1.0.10
+    - mdm/product@1.0.11
+    - erp/inventory@1.0.18
+    - erp/finance@1.0.14
     - { id: infra/workflow@1.0.4, optional: true }
   resources:
     # ⚠️ engine 逐字参与匹配（设计书 §2.7.3.1）：这里写的词必须与
@@ -167,7 +168,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/erp-sales:1.0.25
+  image: brickenterprise/erp-sales:1.0.26
   port: 8084                         # 端口册 registry/ports.tsv
   extraPorts:
     - { name: grpc, port: 9094 }     # → ERP_SALES_GRPC_ENDPOINT（值仍以 http:// 开头）
