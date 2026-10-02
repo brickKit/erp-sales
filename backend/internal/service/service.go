@@ -72,7 +72,7 @@ func (s *Service) CreateOrder(ctx context.Context, idempotencyKey, customerID st
 	}
 	order, err := s.tcc.CreateOrder(ctx, idempotencyKey, customerID, in)
 	if err != nil {
-		s.logger.Error("建单失败", "customer_id", customerID, "error", err)
+		s.logger.Log(ctx, tcc.FailureLevel(err), "建单失败", "customer_id", customerID, "error", err)
 		return nil, err
 	}
 	return order, nil
@@ -90,7 +90,7 @@ func (s *Service) ConfirmOrder(ctx context.Context, orderID, idempotencyKey stri
 	}
 	order, err := s.tcc.ConfirmOrder(ctx, orderID, idempotencyKey, s.logger)
 	if err != nil {
-		s.logger.Error("确认订单失败", "order_id", orderID, "error", err)
+		s.logger.Log(ctx, tcc.FailureLevel(err), "确认订单失败", "order_id", orderID, "error", err)
 		return nil, err
 	}
 	return order, nil
@@ -108,7 +108,7 @@ func (s *Service) CancelOrder(ctx context.Context, orderID, idempotencyKey, reas
 	}
 	order, err := s.tcc.CancelOrder(ctx, orderID, idempotencyKey, reason)
 	if err != nil {
-		s.logger.Error("取消订单失败", "order_id", orderID, "error", err)
+		s.logger.Log(ctx, tcc.FailureLevel(err), "取消订单失败", "order_id", orderID, "error", err)
 		return nil, err
 	}
 	return order, nil
@@ -126,7 +126,7 @@ func (s *Service) ShipOrder(ctx context.Context, orderID, idempotencyKey string)
 	}
 	order, err := s.tcc.ShipOrder(ctx, orderID, idempotencyKey)
 	if err != nil {
-		s.logger.Error("发货失败", "order_id", orderID, "error", err)
+		s.logger.Log(ctx, tcc.FailureLevel(err), "发货失败", "order_id", orderID, "error", err)
 		return nil, err
 	}
 	return order, nil

@@ -195,13 +195,15 @@ func (o *Orchestrator) compensateReserve(
 		}
 		failures++
 		attempts, incErr := o.Repo.IncrementCompensationAttempts(ctx, orderID)
-		logger.Error("补偿失败：CancelReservation 出错", "order_id", orderID, "reservation_id", reservationID,
+		logger.Warn("补偿失败：CancelReservation 出错", "order_id", orderID, "reservation_id", reservationID,
 			"attempts", attempts, "error", err)
 		if incErr != nil {
 			logger.Error("累加补偿失败计数出错，停止重试", "order_id", orderID, "error", incErr)
 			return
 		}
 		if attempts >= maxCompensationFailures {
+			logger.Error("补偿连续失败，订单已挂起，需要人工释放预留", "order_id", orderID,
+				"reservation_id", reservationID, "attempts", attempts, "error", err)
 			// 订单此时已是 SUSPENDED：ConfirmOrder 顶部的 status != DRAFT 校验
 			// 会拒绝任何后续确认，这条待办的幂等键在同一次挂起里只会用一次。
 			o.maybeCreateExceptionTask(ctx, orderID, idempotencyKey, logger)

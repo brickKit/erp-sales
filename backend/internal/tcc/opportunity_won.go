@@ -57,14 +57,14 @@ type OpportunityWonPayload struct {
 func (o *Orchestrator) HandleOpportunityWon(ctx context.Context, p OpportunityWonPayload, logger *slog.Logger) {
 	order, err := o.createOrderForOpportunity(ctx, p)
 	if err != nil {
-		logger.Error("商机赢单自动建单失败", "opportunity_id", p.OpportunityID, "error", err)
+		logger.Log(ctx, automationFailureLevel(err), "商机赢单自动建单失败", "opportunity_id", p.OpportunityID, "error", err)
 		o.createOpportunityExceptionTask(ctx, p, "建单失败: "+err.Error(), logger)
 		return
 	}
 
 	idemKey := "crm-won:" + p.OpportunityID + ":confirm"
 	if _, err := o.confirmOrderForOpportunity(ctx, order.ID, idemKey, logger); err != nil {
-		logger.Error("商机赢单自动确认订单失败", "opportunity_id", p.OpportunityID, "order_id", order.ID, "error", err)
+		logger.Log(ctx, automationFailureLevel(err), "商机赢单自动确认订单失败", "opportunity_id", p.OpportunityID, "order_id", order.ID, "error", err)
 		o.createOpportunityExceptionTask(ctx, p, fmt.Sprintf("订单 %s 确认失败: %s", order.ID, err.Error()), logger)
 		return
 	}

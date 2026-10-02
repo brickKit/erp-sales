@@ -23,7 +23,7 @@ var monthlyPartitionedTables = []string{"sales_orders", "sales_order_items"}
 
 func StartMonthly(ctx context.Context, db *sql.DB, role, schema string, logger *slog.Logger) error {
 	if err := ensureAllMonthly(ctx, db, role, schema); err != nil {
-		logger.Error("月分区维护失败", "error", err)
+		logMaintenanceFailure(ctx, logger, "月分区维护失败", err)
 	}
 
 	ticker := time.NewTicker(checkInterval)
@@ -34,7 +34,7 @@ func StartMonthly(ctx context.Context, db *sql.DB, role, schema string, logger *
 			return nil
 		case <-ticker.C:
 			if err := ensureAllMonthly(ctx, db, role, schema); err != nil {
-				logger.Error("月分区维护失败", "error", err)
+				logMaintenanceFailure(ctx, logger, "月分区维护失败", err)
 			}
 		}
 	}

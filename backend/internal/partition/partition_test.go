@@ -3,6 +3,7 @@ package partition
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -99,3 +100,39 @@ func TestEnsureAllMonthly_幂等且与迁移分区命名一致(t *testing.T) {
 		}
 	}
 }
+
+// 进程关闭时 ctx 已经取消，分区维护那一次查询必然失败——这是正常关闭，
+// 不是运维要处理的事，不能记 ERROR。
+func TestStart_关闭时取消不记ERROR(t *testing.T) {
+	db := testDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for name, start := range map[string]func(context.Context, *sql.DB, string, string, *slog.Logger) error{
+		"周分区": Start, "月分区": StartMonthly,
+	} {
+		var errorsLogged int
+		logger := slog.New(levelCounter{min: slog.LevelError, n: &errorsLogged})
+		if err := start(ctx, db, "erp_sales_rw", "erp_sales", logger); err != nil {
+			t.Fatalf("%s：关闭时应返回 nil，实际 %v", name, err)
+		}
+		if errorsLogged != 0 {
+			t.Fatalf("%s：关闭时取消不该记 ERROR，实际 %d 条", name, errorsLogged)
+		}
+	}
+}
+
+// levelCounter 数级别不低于 min 的日志条数。
+type levelCounter struct {
+	min slog.Level
+	n   *int
+}
+
+func (h levelCounter) Enabled(context.Context, slog.Level) bool { return true }
+func (h levelCounter) Handle(_ context.Context, r slog.Record) error {
+	if r.Level >= h.min {
+		*h.n++
+	}
+	return nil
+}
+func (h levelCounter) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h levelCounter) WithGroup(string) slog.Handler      { return h }

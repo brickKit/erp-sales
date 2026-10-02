@@ -27,7 +27,7 @@ var weeklyPartitionedTables = []string{"event_outbox", "event_inbox"}
 // 不让整个循环退出（§13.3 铁律七）。
 func Start(ctx context.Context, db *sql.DB, role, schema string, logger *slog.Logger) error {
 	if err := ensureAllWeekly(ctx, db, role, schema); err != nil {
-		logger.Error("周分区维护失败", "error", err)
+		logMaintenanceFailure(ctx, logger, "周分区维护失败", err)
 	}
 
 	ticker := time.NewTicker(checkInterval)
@@ -38,7 +38,7 @@ func Start(ctx context.Context, db *sql.DB, role, schema string, logger *slog.Lo
 			return nil
 		case <-ticker.C:
 			if err := ensureAllWeekly(ctx, db, role, schema); err != nil {
-				logger.Error("周分区维护失败", "error", err)
+				logMaintenanceFailure(ctx, logger, "周分区维护失败", err)
 			}
 		}
 	}
@@ -90,4 +90,14 @@ func ensurePartition(ctx context.Context, tx *sql.Tx, table string, from, to tim
 		return fmt.Errorf("建分区 %s: %w", name, err)
 	}
 	return nil
+}
+
+// logMaintenanceFailure 记一次分区维护失败。进程正在关闭（ctx 已取消）时
+// 那一次查询必然失败，这是正常关闭，不记 ERROR。
+func logMaintenanceFailure(ctx context.Context, logger *slog.Logger, msg string, err error) {
+	if ctx.Err() != nil {
+		logger.Info(msg+"（进程关闭中）", "error", err)
+		return
+	}
+	logger.Error(msg, "error", err)
 }
