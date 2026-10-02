@@ -3,6 +3,7 @@ package tcc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -13,6 +14,7 @@ import (
 
 	inventoryv1 "github.com/brickKit/erp-inventory/gen/erp/inventory/v1"
 	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
+	customerv1 "github.com/brickKit/mdm-customer/gen/mdm/customer/v1"
 )
 
 // reserveIdemKey 派生库存预留这一步专用的幂等键——与 ConfirmOrder 命令
@@ -25,8 +27,9 @@ func reserveIdemKey(idempotencyKey string) string { return idempotencyKey + ":re
 //
 //	① BatchGet 客户            失败 → 直接返回，无需补偿
 //	② BatchGet 产品            失败 → 直接返回，无需补偿
-//	③ 本地缓存校验信用额度      超限 → 直接返回，无需补偿（零网络开销，
-//	                            刻意排在 Reserve 之前：超额度的单不去占库存）
+//	③ 信用额度校验              超限 → 直接返回，无需补偿（用①拿到的额度
+//	                            刷新快照后判，刻意排在 Reserve 之前：超额度
+//	                            的单不去占库存）
 //	④ Reserve 库存             失败 → 直接返回；超时 → 见 resolveAfterTimeout
 //	⑤ 落库 + 发事件（同一事务） 失败 → 补偿：CancelReservation
 func (o *Orchestrator) ConfirmOrder(ctx context.Context, orderID, idempotencyKey string, logger *slog.Logger) (*repo.Order, error) {
@@ -39,7 +42,8 @@ func (o *Orchestrator) ConfirmOrder(ctx context.Context, orderID, idempotencyKey
 	}
 
 	// ① BatchGet 客户
-	if _, err := o.fetchActiveCustomer(ctx, order.CustomerID); err != nil {
+	customer, err := o.fetchActiveCustomer(ctx, order.CustomerID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -52,14 +56,9 @@ func (o *Orchestrator) ConfirmOrder(ctx context.Context, orderID, idempotencyKey
 		return nil, err
 	}
 
-	// ③ 本地信用额度预判（零网络开销，排在 Reserve 之前）
-	creditLimit, creditExposure, err := o.Repo.GetCustomerSnapshot(ctx, order.CustomerID)
-	if err != nil {
-		return nil, fmt.Errorf("查信用额度快照失败: %w", err)
-	}
-	if exceedsCreditLimit(creditExposure, order.TotalAmount, creditLimit) {
-		return nil, fmt.Errorf("%w: customer_id=%s 已用 %s + 本单 %s 超过额度 %s",
-			repo.ErrInvalidArgument, order.CustomerID, creditExposure, order.TotalAmount, creditLimit)
+	// ③ 信用额度预判（不再多一次网络调用，排在 Reserve 之前）
+	if err := o.checkCredit(ctx, customer, order, logger); err != nil {
+		return nil, err
 	}
 
 	// ④ Reserve 库存
@@ -246,9 +245,9 @@ func (o *Orchestrator) maybeCreateExceptionTask(ctx context.Context, orderID, id
 		// 后如果再次补偿失败 3 次，调用方会带一个全新的 idempotency_key
 		// 发起新的 ConfirmOrder，天然产生一条新的待办，不会撞上旧的
 		// command_idempotency 记录。
-		IdempotencyKey:   idempotencyKey + ":exception-task",
-		Type:             workflowv1.TaskType_TASK_TYPE_EXCEPTION,
-		AssigneeSub:      o.ExceptionAssigneeSub,
+		IdempotencyKey: idempotencyKey + ":exception-task",
+		Type:           workflowv1.TaskType_TASK_TYPE_EXCEPTION,
+		AssigneeSub:    o.ExceptionAssigneeSub,
 		// 只配置了被指派人的 sub，不知道他的部门路径，所以留空。workflow 对
 		// 空路径的约定是"只有被指派人本人看得到"：部门子树里的其他人、管理
 		// 视图都看不到这条待办。绝不填调用方自己的数据范围值。
@@ -265,6 +264,30 @@ func (o *Orchestrator) maybeCreateExceptionTask(ctx context.Context, orderID, id
 		return
 	}
 	logger.Info("已建异常待办", "order_id", orderID)
+}
+
+// checkCredit 是确认链的第③步，ConfirmOrder 与赢单转单共用：先用第①步
+// BatchGet 拿到的客户（mdm/customer 的权威额度与 version）刷新本地快照，再按
+// 快照判"已用额度 + 本单金额"是否超过额度。刷新按 version 单调，事件已经带来
+// 更新的值时不覆盖；mdm/customer 给的额度写法不合法时沿用快照（没有快照就是
+// 0，任何正金额都被拒）。
+func (o *Orchestrator) checkCredit(ctx context.Context, customer *customerv1.Customer, order *repo.Order, logger *slog.Logger) error {
+	err := o.Repo.RefreshCustomerSnapshot(ctx, customer.Id, customer.CreditLimit, customer.Version)
+	if errors.Is(err, repo.ErrInvalidArgument) {
+		logger.Warn("mdm/customer 返回的额度不是合法的十进制数，沿用本地快照",
+			"customer_id", customer.Id, "credit_limit", customer.CreditLimit)
+	} else if err != nil {
+		return fmt.Errorf("刷新信用额度快照失败: %w", err)
+	}
+	creditLimit, creditExposure, err := o.Repo.GetCustomerSnapshot(ctx, order.CustomerID)
+	if err != nil {
+		return fmt.Errorf("查信用额度快照失败: %w", err)
+	}
+	if exceedsCreditLimit(creditExposure, order.TotalAmount, creditLimit) {
+		return fmt.Errorf("%w: customer_id=%s 已用 %s + 本单 %s 超过额度 %s",
+			repo.ErrInvalidArgument, order.CustomerID, creditExposure, order.TotalAmount, creditLimit)
+	}
+	return nil
 }
 
 // exceedsCreditLimit 判断"已用额度 + 本单金额"是否超过"额度"，十进制

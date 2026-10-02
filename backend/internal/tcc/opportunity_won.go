@@ -191,7 +191,8 @@ func (o *Orchestrator) confirmOrderForOpportunity(ctx context.Context, orderID, 
 		return nil, fmt.Errorf("%w: order id=%s status=%s", repo.ErrOrderNotDraft, orderID, order.Status)
 	}
 
-	if _, err := o.fetchActiveCustomerSystem(ctx, order.CustomerID); err != nil {
+	customer, err := o.fetchActiveCustomerSystem(ctx, order.CustomerID)
+	if err != nil {
 		return nil, err
 	}
 	productIDs := make([]string, 0, len(order.Items))
@@ -202,13 +203,8 @@ func (o *Orchestrator) confirmOrderForOpportunity(ctx context.Context, orderID, 
 		return nil, err
 	}
 
-	creditLimit, creditExposure, err := o.Repo.GetCustomerSnapshot(ctx, order.CustomerID)
-	if err != nil {
-		return nil, fmt.Errorf("查信用额度快照失败: %w", err)
-	}
-	if exceedsCreditLimit(creditExposure, order.TotalAmount, creditLimit) {
-		return nil, fmt.Errorf("%w: customer_id=%s 已用 %s + 本单 %s 超过额度 %s",
-			repo.ErrInvalidArgument, order.CustomerID, creditExposure, order.TotalAmount, creditLimit)
+	if err := o.checkCredit(ctx, customer, order, logger); err != nil {
+		return nil, err
 	}
 
 	invConn, closeInv, err := o.Clients.InventorySystem()

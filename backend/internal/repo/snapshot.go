@@ -43,9 +43,9 @@ func UpsertCustomerSnapshotCreditLimitTx(tx *sql.Tx, customerID, creditLimit str
 	return nil
 }
 
-// GetCustomerSnapshotTx 读客户额度副本——确认订单时本地信用额度预判用（不走
-// 网络）。查不到视为额度 0、已用额度 0，不报错：额度 0 时任何正金额的订单都
-// 会被拒，要等 mdm.customer.* 事件把额度带过来。
+// GetCustomerSnapshotTx 读客户额度副本——确认订单的信用额度预判用。确认链先
+// 用 BatchGet 拿到的客户刷新它（Repo.RefreshCustomerSnapshot），所以正常情况下
+// 一定查得到。查不到视为额度 0、已用额度 0，不报错：任何正金额的订单都会被拒。
 func GetCustomerSnapshotTx(tx *sql.Tx, customerID string) (creditLimit, creditExposure string, err error) {
 	err = tx.QueryRow(`SELECT credit_limit, credit_exposure FROM customer_snapshots WHERE customer_id = $1`,
 		customerID).Scan(&creditLimit, &creditExposure)

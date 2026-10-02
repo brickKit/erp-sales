@@ -141,7 +141,7 @@ func (r *Repo) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order, er
 }
 
 // ── FinalizeConfirm：ConfirmOrder 的第⑤步。跨组件
-// 校验、本地信用额度预判、Reserve 库存全部由 tcc 包在调用这个函数之前
+// 校验、信用额度预判、Reserve 库存全部由 tcc 包在调用这个函数之前
 // 做完并成功——这里只做"锁行重新确认还是 DRAFT → 转 CONFIRMED → 记
 // reservation_id → 发 sales.order.created.v1"，全部在一个事务里 ──
 
@@ -418,9 +418,19 @@ func (r *Repo) EnqueueReconciliation(ctx context.Context, orderID, reservationID
 	})
 }
 
-// ── 本地信用额度校验（ConfirmOrder TCC 链第③步）：包一层 WithTx，供
-// tcc 包在没有现成 *sql.Tx 时调用（GetCustomerSnapshotTx 本身接 tx，
-// 是给 consumer 复用的，同 snapshot.go 的判据）──
+// ── 信用额度校验（ConfirmOrder TCC 链第③步）：包一层 WithTx，供 tcc 包在
+// 没有现成 *sql.Tx 时调用（snapshot.go 的两个函数接 tx，是给 consumer 复用的）──
+
+// RefreshCustomerSnapshot 用 mdm/customer 刚返回的客户（BatchGet）刷新额度快照，
+// 同样按 version 单调：比快照新才写，晚到的旧值不覆盖事件已经带来的新值。
+// 快照只靠事件维护是不够的——事件走 NATS 核心订阅、不重放：本组件装进一个
+// 已经有客户的项目时，那些客户的 created 事件早已发完；本组件停机期间的
+// updated 事件也收不到。额度写法不合法时返回 ErrInvalidArgument，快照不动。
+func (r *Repo) RefreshCustomerSnapshot(ctx context.Context, customerID, creditLimit string, version int64) error {
+	return besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
+		return UpsertCustomerSnapshotCreditLimitTx(tx, customerID, creditLimit, version)
+	})
+}
 
 func (r *Repo) GetCustomerSnapshot(ctx context.Context, customerID string) (creditLimit, creditExposure string, err error) {
 	err = besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {

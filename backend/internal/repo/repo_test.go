@@ -331,3 +331,37 @@ func TestGetCustomerSnapshot_查不到时返回0(t *testing.T) {
 		t.Fatalf("查不到的客户应该返回额度 0、已用额度 0，实际 limit=%q exposure=%q", limit, exposure)
 	}
 }
+
+func TestRefreshCustomerSnapshot_按version单调且不收非法额度(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	r := New(db, "erp_sales_rw", "erp_sales")
+	id := uniqueSuffix("refresh-customer")
+
+	steps := []struct {
+		limit   string
+		version int64
+		wantErr bool
+		want    string
+		why     string
+	}{
+		{"8000.00", 3, false, "8000.00", "没有快照：按 mdm/customer 返回的额度建快照"},
+		{"5000.00", 2, false, "8000.00", "version 比快照旧：不覆盖（事件已经带来更新的值）"},
+		{"8000.00", 3, false, "8000.00", "同一个 version：不变"},
+		{"NaN", 4, true, "8000.00", "额度写法不合法：报参数错误，快照不动"},
+		{"9000.50", 4, false, "9000.50", "version 更新：刷新"},
+	}
+	for _, s := range steps {
+		err := r.RefreshCustomerSnapshot(ctx, id, s.limit, s.version)
+		if s.wantErr != errors.Is(err, ErrInvalidArgument) || (!s.wantErr && err != nil) {
+			t.Fatalf("%s：RefreshCustomerSnapshot(%q, v%d) 的错误不对：%v", s.why, s.limit, s.version, err)
+		}
+		limit, _, err := r.GetCustomerSnapshot(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if limit != s.want {
+			t.Fatalf("%s：期望额度 %s，实际 %s", s.why, s.want, limit)
+		}
+	}
+}
