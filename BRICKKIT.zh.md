@@ -24,14 +24,14 @@
 
 ## 部署前准备
 
-- **PostgreSQL**：schema `erp_sales`，按 schema 约定另建 `erp_sales_archive` 的话也行（本组件从不写它）。登录角色 `erp_sales_rw`，对 `erp_sales` 有 `USAGE` 与 `CREATE`，以及它的密码。迁移以这个角色运行并建表，所以表属于这个角色；这一点要紧：运行中的组件自己建 `sales_orders` / `sales_order_items` 的月分区（提前三个月）和 `event_outbox` / `event_inbox` 的周分区（提前四周）。BrickKit 不建这些；在 BrickEnterprise 组装项目里由 `make dev-env` 把密码写进 `.env`、`make db-init` 建 schema、角色与授权。
+- **PostgreSQL**：一个 schema、一个登录角色，名字随你定，分别写进 `PG_SCHEMA` 与 `PG_USER`。这个角色要能连上数据库、对 schema 有 `USAGE` 与 `CREATE`，并由它运行迁移（`./migrate up`），所以迁移建的表都属于它。这一点要紧：运行中的组件以这个角色自己建 `sales_orders` / `sales_order_items` 的月分区（提前三个月）和 `event_outbox` / `event_inbox` 的周分区（提前四周）。迁移里不写 schema 名和角色名，并按运行当天建好分区窗口，所以新库迁移完立刻能写。两个名字都必须是小写标识符（`^[a-z][a-z0-9_]*$`），否则组件拒绝启动并点名是哪个键。进外壳时外壳以自己的角色登录、每个事务切到 `PG_USER`（`SET LOCAL ROLE`），所以外壳的登录角色必须是 `PG_USER` 的成员，并保持默认的 `INHERIT`（Outbox 推送读 Outbox 时不切角色）。按 schema 约定另建的 `<schema>_archive` 在 search_path 里，但本组件从不写它。BrickKit 不建这些；在 BrickEnterprise 组装项目里由 `make dev-env` 把密码写进 `.env`、`make db-init` 建 schema `erp_sales`、角色 `erp_sales_rw` 与授权。
 - **NATS** 在 `NATS_URL` 可达：事件经 Outbox 表和后台推送循环发出，消费的事件（见契约索引）也从这里进来。NATS 不可达时组件照样启动，要发的事件留在 Outbox 里。
 - **仓库**：`erp/inventory` 里的一个仓库，把它的 ID 填进 `DEFAULT_WAREHOUSE_ID`：每次确认都从这一个仓库预留。BrickEnterprise 项目里 `erp/inventory` 的迁移预置了仓库 `1`（`WH-EAST`）。
 - **价格**：迁移预置了一条全局规则（单价 `100.00`、无折扣、税率 `0.13`），让订单至少能定价。没有管理价格表的接口；真实价格是往 `pricelist_items` 里插的行。
 - **信用额度**：只有客户的信用额度够用，订单才能确认。确认时本来就要向 `mdm/customer` 要这个客户，它的回答先刷新本地副本再判，所以在本组件装进来之前就有的客户、本组件停机期间改过额度的客户，都按当前额度判。副本只按 `version` 往前走；平时由 `mdm.customer.*` 事件保持最新。
 - **部门**：用户的 `dept_path`（由 `infra/authz` 签发）决定 `dept` 视图里看到什么。还没分到任何部门的用户只看得到自己名下的订单；要看全公司的人应当分在根部门。
 - **授权**（`infra/authz`）与**身份**（`infra/iam-casdoor`，或任何提供 JWKS 的 IAM）要能经 `AUTHZ_BUNDLE_URL`、`IAM_JWKS_URL` 访问到，REST 路由才不只回错误。它们是配置，不是依赖。
-- 演示数据（可选）：本组件、`infra/iam-casdoor`、`infra/authz`、`mdm/customer`、`mdm/product` 都在跑之后，在组件目录 `make seed` 经真实 REST 接口建五张不同状态的订单（会先灌好前面几个组件的种子）。
+- 演示数据（可选）：本组件、`infra/iam-casdoor`、`infra/authz`、`mdm/customer`、`mdm/product`、`erp/inventory` 都在跑之后，在组件目录 `make seed` 经真实 REST 接口建五张不同状态的订单（会先灌好前面几个组件的种子，包括库存）。
 
 ## 依赖说明
 
@@ -52,10 +52,10 @@
 |---|---|
 | `PG_HOST` | PostgreSQL 主机。一般用项目共享值（`$var:PG_HOST`）。 |
 | `PG_PORT` | PostgreSQL 端口；默认 `5432`。 |
-| `PG_DATABASE` | 放 `erp_sales` schema 的数据库（`$var:PG_DATABASE`）。 |
-| `PG_USER` | 登录角色，字面量 `erp_sales_rw`。进外壳时外壳以自己的角色登录、每个事务切到这个角色（`SET LOCAL ROLE`），所以角色名必须是 `<PG_SCHEMA>_rw`。 |
+| `PG_DATABASE` | 放 `PG_SCHEMA` 那个 schema 的数据库（`$var:PG_DATABASE`）。 |
+| `PG_USER` | 本组件干活用的角色，名字随意：独立运行时就是登录角色；进外壳时外壳以自己的角色登录，每个事务切到这个角色（`SET LOCAL ROLE`）。必填；必须是跑过迁移的那个角色。写字面量，BrickEnterprise 项目里是 `erp_sales_rw`。 |
 | `PG_PASSWORD` | `PG_USER` 的密码。密钥：写 `${ERP_SALES_DB_PASSWORD}`（或你的密钥库引用），绝不写值。 |
-| `PG_SCHEMA` | 全部表、Outbox 与迁移状态表（`schema_migrations_erp_sales`）所在的 schema；默认 `erp_sales`。照样写上字面量，让每个组件的 schema 在一处看得见。 |
+| `PG_SCHEMA` | 全部表、Outbox 与迁移状态表（`schema_migrations_<PG_SCHEMA>`）所在的 schema，名字随意；默认 `erp_sales`。照样写上字面量，让每个组件的 schema 在一处看得见。 |
 | `NATS_URL` | 发布与消费事件的 NATS 服务器（`$var:NATS_URL`）。 |
 | `OTEL_BASE_URL` | OpenTelemetry 采集器的基础 URL；为空（默认）时什么都不导出。 |
 | `AUTHZ_BUNDLE_URL` | 权限判定轮询的授权包 URL，例如 `http://infra-authz-2-0-0:8223/authz/bundle`。必填：没有它每条受保护路由都回 `503`。要跟项目里 authz 的版本保持一致。 |
@@ -68,7 +68,7 @@
 - `contracts/erp/sales/v1/sales.proto` —— gRPC `erp.sales.v1.SalesService`：`CreateOrder`、`ConfirmOrder`、`CancelOrder`、`ShipOrder`（都带 `idempotency_key`）、`CalculatePriceDryRun`、`GetOrder`、`ListOrders`（游标分页，没有 offset；可按客户、状态、时间窗口、`source_opportunity_id` 过滤）、`BatchGetOrder`（找不到的 ID 放进 `missing_ids`，不报错）、`GetOrderStatus`（给命令超时的调用方用；`UNSPECIFIED` 表示没有这张单）。`Order.source_opportunity_id` 是赢单订单的来源商机，手工建的单为空。`GetOrder` 与 `ListOrders` 按调用者的数据范围过滤，需要调用者的身份；`BatchGetOrder` 与 `GetOrderStatus` 是组件之间的读，不带范围。Go 包是独立模块 `github.com/brickKit/erp-sales/gen/erp/sales`。
 - `contracts/sales.openapi.yaml` —— REST 前缀 `/erp/sales`，每条路由都带权限键：`GET /orders`（`erp.sales.view`；`view=dept`（默认）或 `mine`，其它取值 `400`；`customer_id`、`status_filter`、`source_opportunity_id`、`created_after` / `created_before`（RFC 3339，默认最近 90 天）、`cursor`、`page_size`），`GET /orders/{id}`（`erp.sales.view`），`POST /orders`（`erp.sales.create`；数量是正的十进制字符串，整数至多 12 位、小数至多 6 位），`POST /orders/{id}/confirm`（`erp.sales.confirm`），`POST /orders/{id}/cancel`（`erp.sales.cancel`），`POST /orders/{id}/ship`（`erp.sales.ship`），`POST /price/dry-run`（`erp.sales.create`），`GET /stats/summary`（`erp.sales.view`；`period=week|month|quarter`（7 / 30 / 90 天，默认 `month`）与列表相同的 `view`，二选一，不会两个一起；订单数、已确认数与金额，按日、按状态分布）。金额是十进制字符串。错误：输入不合法、订单状态不对或库存不足 → `400`；订单不存在、或读一张不在调用者范围内的订单 → `404`（两者答得一样，数据范围不泄露订单是否存在）；确认、取消、发货一张不在范围内的订单 → `403`；超时后预留状态未知 → `503`（带同一个幂等键重试）。
 - `contracts/events/sales.events.json` —— 经 Outbox 发布：`sales.order.created.v1`（确认时发；带 `source_opportunity_id`，可选，手工单为空）、`sales.order.cancelled.v1`、`sales.order.shipped.v1`。消费：`finance.credit.rejected.v1`（挂起订单）、`mdm.customer.created.v1` / `.updated.v1`（额度副本；没带 `credit_limit` 的更新保留原额度）、`infra.workflow.task.completed.v1`（补偿异常待办被同意后订单回到 `DRAFT`）、`crm.opportunity.won.v1`（建单并确认）。
-- `assembly.yaml` —— 本项目的元数据：上面五个权限键、菜单项、网关路由 `/erp/sales/**`、schema 与角色，以及 `sales_orders` 上的数据范围 `org`（`dept_path` 前缀）与 `owner`（`owner_id`）。没有部门的调用者（token 里 `dept_path` 为空）什么 `org` 行都不命中：`dept` 视图为空、统计为零，只看得到、动得了自己名下的订单。他仍然可以建单，这些单的 `dept_path` 为空，只对他本人可见。`dept_path = "/"` 是显式的根标记，命中所有带部门的订单。
+- `assembly.yaml` —— 本项目的元数据：上面五个权限键、菜单项、网关路由 `/erp/sales/**`、本项目开出的 schema 与角色（`erp_sales`、`erp_sales_rw`），以及 `sales_orders` 上的数据范围 `org`（`dept_path` 前缀）与 `owner`（`owner_id`）。没有部门的调用者（token 里 `dept_path` 为空）什么 `org` 行都不命中：`dept` 视图为空、统计为零，只看得到、动得了自己名下的订单。他仍然可以建单，这些单的 `dept_path` 为空，只对他本人可见。`dept_path = "/"` 是显式的根标记，命中所有带部门的订单。
 
 ## 外壳声明
 

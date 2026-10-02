@@ -34,6 +34,8 @@ This component owns the sales order from quotation to shipment: the order and it
 
 `order_no` is `SO` + the ID: unique, gaps allowed (an insert that rolls back still consumes the sequence). A sales number with gaps is not an audit problem; that applies to an accounting posting number, not here. Order lines are full snapshots: a product renamed later must not rewrite past orders, and the product data lives in another process where no join is possible anyway.
 
+**The database identity is configuration.** The schema is `PG_SCHEMA` and the role is `PG_USER`, whatever they are called; nothing derives one from the other and no migration names either. The deployer provides one schema and one login role with `USAGE` and `CREATE` on it; the migration runs as that role, so the role owns every table, which is exactly what the partition loops need to create partitions as that role. Standalone the pool logs in as `PG_USER`; in a shell it logs in as the shell, and every transaction switches to the member's own `PG_USER` (`SET LOCAL ROLE`). The earlier shape (role = schema + `_rw`, `ALTER … OWNER TO erp_sales_rw` in the migrations) tied the component to one project's naming: another deployment, or the same project with a renamed schema, could not install it. A component that has to be replaceable, on a database that has to be swappable, cannot carry its host's names; `backend/module/identity_test.go` installs it under names unrelated to each other, both ways.
+
 ## Contract surface
 
 gRPC `erp.sales.v1.SalesService`:
@@ -119,9 +121,9 @@ A root: outgoing edges to `mdm/customer`, `mdm/product`, `erp/inventory` and the
 
 ## Partitioning and archiving
 
-`sales_orders` and `sales_order_items` are partitioned by month, items by the header's `created_at` so that the lines of one order always sit in the same partition as their header and leave together when it is archived. The component creates partitions three months ahead; the migration's initial partitions use the same names, so the loop finds them. `event_outbox` / `event_inbox` are weekly, four weeks ahead. Price lists and customer snapshots are small and permanent.
+`sales_orders` and `sales_order_items` are partitioned by month, items by the header's `created_at` so that the lines of one order always sit in the same partition as their header and leave together when it is archived. The component creates partitions three months ahead; `event_outbox` / `event_inbox` are weekly, four weeks ahead. The migrations use the same partition names, so the loops find what they created. The initial partitions of 001 / 002 carry the dates they were written on (from 2026-09), so on a database installed later they would leave today without a partition until the loops' first run; migration 005 therefore creates the loops' window for the day it runs, and a fresh database can be written to as soon as it is migrated. Price lists and customer snapshots are small and permanent.
 
-Archiving is designed but not implemented: an order moves to `erp_sales_archive` only when it is terminal (`COMPLETED`, `CANCELLED`, `CLOSED`) **and** older than 12 months — a 14-month-old order that has not shipped is still alive.
+Archiving is designed but not implemented: an order moves to the `<schema>_archive` schema only when it is terminal (`COMPLETED`, `CANCELLED`, `CLOSED`) **and** older than 12 months — a 14-month-old order that has not shipped is still alive.
 
 ## Data scopes
 
@@ -158,3 +160,4 @@ Lists and statistics choose one view with `view` (`dept` by default, or `mine`; 
 | The won-opportunity handler holds the inbox transaction's database connection while it calls dependencies | At most a few call timeouts per won event; acceptable at the expected volume |
 | Statistics bucket days in UTC | A user in UTC+8 sees the day change at 08:00; a time-zone parameter is an additive change if the dashboard needs it |
 | Archiving of terminal orders older than 12 months | Designed, not built |
+| In a shell, `besdk.StartOutboxPump` reads and updates `event_outbox` as the shell's login role; it takes no role and does not switch to `PG_USER` | The shell's role must be a member of `PG_USER` with `INHERIT` (stated in BRICKKIT under Before you deploy). A pump that switches roles per batch is a be-sdk-go change |

@@ -8,7 +8,7 @@
 
 | 路径 | 负责 |
 |---|---|
-| `backend/module/module.go` | 唯一入口 `New(ctx, rt)`：读配置（`readConfig`），装配 repo → 编排器 → service → HTTP + gRPC，启动 Outbox 推送、两个分区循环与消费者。独立运行与进外壳同一个函数 |
+| `backend/module/module.go` | 唯一入口 `New(ctx, rt)`：读配置（`readConfig`；schema 是 `PG_SCHEMA`，角色是 `PG_USER`），装配 repo → 编排器 → service → HTTP + gRPC，启动 Outbox 推送、两个分区循环与消费者。独立运行与进外壳同一个函数 |
 | `backend/cmd/server/main.go` | 一行 `besdk.RunStandalone(module.New)` |
 | `backend/cmd/migrate/main.go` | 一行 `migrate.Main(migrations.FS)`：迁移容器的入口（`./migrate up`） |
 | `backend/internal/tcc/` | 跨组件编排：`confirm.go`（预留、超时后查状态、补偿、挂起与异常待办）、`create.go`、`cancel.go`、`ship.go`、`opportunity_won.go`（赢单商机 → 已确认订单，系统身份）、`loglevel.go`（`FailureLevel`） |
@@ -26,7 +26,7 @@
 | `backend/internal/http/http.go` | REST 路由，每条都带权限键注册；`parseListInput`、`statsSummaryHandler` |
 | `backend/internal/grpc/grpc.go` | `erp.sales.v1.SalesService` |
 | `backend/internal/partition/` | 后台循环：`event_outbox` / `event_inbox` 的周分区提前四周、`sales_orders` / `sales_order_items` 的月分区提前三个月建好 |
-| `migrations/` | SQL 迁移，由 `migrations/embed.go` 嵌入 |
+| `migrations/` | SQL 迁移，由 `migrations/embed.go` 嵌入；不写 schema 名和角色名（由 search_path 与跑迁移的角色给出）；`005` 按运行当天建好分区窗口 |
 | `contracts/` | proto、OpenAPI、事件 schema |
 | `gen/erp/sales/` | 生成的 Go 代码：嵌套的独立 Go 模块，单独打 tag gen/erp/sales/v1.x.y；绝不手改 |
 | `scripts/` | 本地演示数据的 `seed.sh` / `seed-clean.sh` |
@@ -52,7 +52,7 @@ make test                    # 每个包都是 "ok"；没设 TEST_PG_DSN 直接�
 go test ./... -count=1 -v | grep -- '--- SKIP'   # 只有需要真实依赖的测试（14 条，见下文）
 make check-version dag-check contract-check import-scan module-check   # 每个打印一行 ✓
 make docs-check              # "0 with errors, 0 warnings"
-# 迁移，以登录角色运行：
+# 迁移，以登录角色运行（本项目是 erp_sales_rw）：
 PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw \
   PG_PASSWORD="$ERP_SALES_DB_PASSWORD" PG_SCHEMA=erp_sales make migrate-idempotent   # ✓ 迁移幂等
 ```
@@ -68,6 +68,7 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw
 - **`sales.order.created.v1` 在确认时发**，不是建单时：草稿不该产生应收。
 - **订单行是快照**（SKU、名称、单位、价格）；之后不再 join 主数据。
 - **两个数据范围视图，由 `view` 选**：`dept`（部门前缀）或 `mine`（负责人），绝不组合；单张订单的读与命令两者任一命中即可。没有部门的调用者在 `dept` 视图里什么都不命中，只看得到自己的订单。
+- **库身份是配置**：schema 是 `PG_SCHEMA`，每个事务切到的角色是 `PG_USER`，名字随意；迁移以这个角色运行，所以表属于它，迁移里也不写它的名字。`backend/module/identity_test.go` 用互不相干的名字装本组件，独立运行与外壳成员各一遍。
 - **金额与数量全程是十进制字符串**，用 `math/big.Rat` 计算，最后四舍五入（远离零）到分一次。
 - **赢单商机只经事件变成订单**（系统身份，归属取自事件）；失败变成派给商机负责人的异常待办，绝不发事件回 CRM。
 
@@ -88,6 +89,8 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw
 | 不看 `HasDept` 就把 `besdk.ScopeOf(ctx).Prefix` 写进行里 | SDK 的"无部门"值进了 `dept_path`；此后每一个没有部门的调用者都在 `dept` 视图里看到这张单 | 只在 `HasDept` 时快照 `dept_path` / `dept_id`，否则写空串；仓储层的 `CreateOrder` 拒绝不以 `/` 开头的 `dept_path` |
 | 把空的 `ScopePrefix` / `ScopeOwner` 当成"不限" | 空前缀上的 `LIKE` 匹配整张表，人人看到全部订单 | 仓储层返回 `InvalidArgument`；`Order.InScope` 把那一侧当作不命中 |
 | 有人读范围外的单张订单时答 `403` | 这个回答告诉陌生人这张单存在 | 范围外的读答 `404`，文案和 ID 不存在时一字不差；只有命令答 `403`（`GetOrder` 与 `checkOrderInScope`） |
+| 从 schema 名推角色名，或在迁移里写角色名、schema 名（`OWNER TO`、`erp_sales.`） | 在本项目里是绿的，因为名字恰好是 `erp_sales` / `erp_sales_rw`；换个部署，迁移报 `must be able to SET ROLE`，或每个请求报 `role … does not exist` | 角色是 `PG_USER`、schema 是 `PG_SCHEMA`（`readConfig`）；迁移以这个角色运行，裸表名经 search_path 解析 |
+| 只靠迁移里写死日期的初始分区 | 装到那些日期之后的库上，当天没有分区，维护循环第一轮跑完之前每次写入都失败 | 迁移 `005` 按运行当天建好循环的窗口；新的分区表也要这样 |
 | `sales_order_items` 按行自己的时间分区 | 同一张订单的行和订单头落在不同分区 | 按订单头的 `created_at`（`order_created_at`）分区 |
 | 改了 `contracts/erp/sales/v1/sales.proto` 的注释或选项，却不给契约包打 tag | 本地全绿（`replace` 掩盖了它）；外壳拉 `erp-sales/v2` 时对着旧的 `gen/` 编译 | `gen/erp/sales/` 下有任何变化都要打新 tag gen/erp/sales/v1.x.y，根 `go.mod` require 它 |
 

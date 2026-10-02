@@ -39,8 +39,8 @@ test:  ## L1–L3 测试。需要 TEST_PG_DSN（指向 brickkit_test_db）；TES
 	@test -n "$$TEST_PG_DSN" || { echo "✗ 没设 TEST_PG_DSN：连库测试会全部 SKIP 而显示 ok（设法见 AGENTS.md 的 Build and test）"; exit 1; }
 	go test ./... -race -count=1
 
-migrate-idempotent:  ## 同一份迁移连跑两次都成功。需要 PG_HOST PG_PORT PG_DATABASE PG_USER PG_PASSWORD PG_SCHEMA（以 erp_sales_rw 登录）
-	@# 例：PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw
+migrate-idempotent:  ## 同一份迁移连跑两次都成功。需要 PG_HOST PG_PORT PG_DATABASE PG_USER PG_PASSWORD PG_SCHEMA（以本组件的登录角色 PG_USER 登录，它就是表的属主）
+	@# 例（本项目的名字）：PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw
 	@#     PG_PASSWORD=… PG_SCHEMA=erp_sales make migrate-idempotent
 	@mkdir -p build && go build -o build/migrate-probe ./backend/cmd/migrate
 	@build/migrate-probe up && build/migrate-probe up && echo "✓ 迁移幂等"

@@ -8,7 +8,7 @@ The AI guide to developing this component. How to use it, its boundaries and con
 
 | Path | Owns |
 |---|---|
-| `backend/module/module.go` | The only entry, `New(ctx, rt)`: reads the configuration (`readConfig`), builds repo → orchestrator → service → HTTP + gRPC, starts the outbox pump, the two partition loops and the consumers. Same function standalone and in a shell |
+| `backend/module/module.go` | The only entry, `New(ctx, rt)`: reads the configuration (`readConfig`; the schema is `PG_SCHEMA`, the role `PG_USER`), builds repo → orchestrator → service → HTTP + gRPC, starts the outbox pump, the two partition loops and the consumers. Same function standalone and in a shell |
 | `backend/cmd/server/main.go` | One line, `besdk.RunStandalone(module.New)` |
 | `backend/cmd/migrate/main.go` | One line, `migrate.Main(migrations.FS)`: the migration container's entry (`./migrate up`) |
 | `backend/internal/tcc/` | The cross-component orchestration: `confirm.go` (reserve, status after a timeout, compensation, suspension and exception task), `create.go`, `cancel.go`, `ship.go`, `opportunity_won.go` (won opportunity → confirmed order, system identity), `loglevel.go` (`FailureLevel`) |
@@ -26,7 +26,7 @@ The AI guide to developing this component. How to use it, its boundaries and con
 | `backend/internal/http/http.go` | REST routes, each registered with its permission key; `parseListInput`, `statsSummaryHandler` |
 | `backend/internal/grpc/grpc.go` | `erp.sales.v1.SalesService` |
 | `backend/internal/partition/` | Background loops: weekly partitions of `event_outbox` / `event_inbox` four weeks ahead, monthly partitions of `sales_orders` / `sales_order_items` three months ahead |
-| `migrations/` | SQL migrations, embedded by `migrations/embed.go` |
+| `migrations/` | SQL migrations, embedded by `migrations/embed.go`; no schema or role names (the search path and the migrating role supply them); `005` creates the partition window for the day it runs |
 | `contracts/` | proto, OpenAPI, event schema |
 | `gen/erp/sales/` | Generated Go code: a nested Go module, tagged on its own as gen/erp/sales/v1.x.y; never edited by hand |
 | `scripts/` | `seed.sh` / `seed-clean.sh` for local demo data |
@@ -52,7 +52,7 @@ make test                    # every package ends in "ok"; refuses to run withou
 go test ./... -count=1 -v | grep -- '--- SKIP'   # only the tests that need real dependencies (14, see below)
 make check-version dag-check contract-check import-scan module-check   # each prints one ✓ line
 make docs-check              # "0 with errors, 0 warnings"
-# migrations, as the login role:
+# migrations, as the login role (this project's: erp_sales_rw):
 PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw \
   PG_PASSWORD="$ERP_SALES_DB_PASSWORD" PG_SCHEMA=erp_sales make migrate-idempotent   # ✓ 迁移幂等
 ```
@@ -68,6 +68,7 @@ The skipped tests (in `backend/internal/tcc/confirm_test.go`, `backend/internal/
 - **`sales.order.created.v1` is published on confirmation**, not on creation: a draft must not produce a receivable.
 - **Order lines are snapshots** (SKU, name, unit, price); nothing joins the master data later.
 - **Two data-scope views, chosen by `view`**: `dept` (department prefix) or `mine` (owner), never combined; single-order reads and commands accept either. A caller with no department matches no `dept` row and sees only their own orders.
+- **The database identity is configuration**: the schema is `PG_SCHEMA`, the role every transaction switches to is `PG_USER`, under any names; the migration runs as that role, so it owns the tables and no migration names it. `backend/module/identity_test.go` installs the component under unrelated names, standalone and as a shell member.
 - **Money and quantities are decimal strings** end to end, computed with `math/big.Rat` and rounded once, half away from zero, to cents.
 - **A won opportunity becomes an order through the event only** (system identity, ownership taken from the event); failures become an exception task for the opportunity's owner, never an event back to CRM.
 
@@ -88,6 +89,8 @@ The skipped tests (in `backend/internal/tcc/confirm_test.go`, `backend/internal/
 | Write `besdk.ScopeOf(ctx).Prefix` into a row without checking `HasDept` | The SDK's no-department value lands in `dept_path`; every other caller without a department now sees that order in their `dept` view | Snapshot `dept_path` / `dept_id` only when `HasDept`, empty otherwise; `CreateOrder` in the repository rejects a `dept_path` that does not start with `/` |
 | Treat an empty `ScopePrefix` / `ScopeOwner` as "no restriction" | A `LIKE` on an empty prefix matches the whole table, and every caller sees every order | The repository returns `InvalidArgument`; `Order.InScope` treats that side as not matching |
 | Answer `403` when someone reads a single order outside their scope | The answer tells a stranger that the order exists | A read outside the scope is `404`, worded exactly like an unknown ID; only commands answer `403` (`GetOrder` vs `checkOrderInScope`) |
+| Derive the role from the schema name, or write a role or schema name into a migration (`OWNER TO`, `erp_sales.`) | Green in this project, where the names happen to be `erp_sales` / `erp_sales_rw`; any other deployment gets `must be able to SET ROLE` from the migration or `role … does not exist` on every request | The role is `PG_USER` and the schema `PG_SCHEMA` (`readConfig`); the migration runs as the role and resolves bare names through the search path |
+| Rely on the dated initial partitions of a migration alone | On a database installed after those dates, today has no partition and every write fails until the maintenance loop's first run | Migration `005` creates the loops' window for the day it runs; a new partitioned table needs the same |
 | Partition `sales_order_items` by its own time | Items of one order land in different partitions from their header | They are partitioned by the header's `created_at` (`order_created_at`) |
 | Change a comment or option in `contracts/erp/sales/v1/sales.proto` without tagging the contract package | Builds pass locally (the `replace` hides it); a shell fetching `erp-sales/v2` compiles against the old `gen/` | Any change under `gen/erp/sales/` needs a new tag gen/erp/sales/v1.x.y and the root `go.mod` requiring it |
 
