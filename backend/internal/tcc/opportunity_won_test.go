@@ -1,4 +1,4 @@
-// 真故障注入测试（阶段三 Task 14）：HandleOpportunityWon 是
+// 真故障注入测试：HandleOpportunityWon 是
 // crm.opportunity.won.v1 的消费入口，真的调 mdm-customer/mdm-product/
 // erp-inventory（走系统身份，见 opportunity_won.go 顶部注释），断言真实
 // 建单+确认成功，以及库存不足时订单确实没有落库成 CONFIRMED、库存确实
@@ -55,7 +55,7 @@ func TestHandleOpportunityWon_真实建单确认成功(t *testing.T) {
 		t.Fatalf("期望 CONFIRMED，实际 %q", status)
 	}
 	// ⭐ owner_id/dept_path 必须来自事件本身，不是 ctx 派生——事件 handler
-	// 语境下根本没有 JWT/ScopeOf 可用（crm-opportunity 设计计划 §4.1）。
+	// 语境下根本没有 JWT/ScopeOf 可用。
 	if ownerID != "u_won_test_owner" || deptPath != "/1/12/" || deptID != "12" {
 		t.Fatalf("订单归属字段应该来自事件 payload，实际 owner_id=%q dept_path=%q dept_id=%q", ownerID, deptPath, deptID)
 	}
@@ -69,10 +69,9 @@ func TestHandleOpportunityWon_真实建单确认成功(t *testing.T) {
 	}
 }
 
-// TestHandleOpportunityWon_库存不足时不建单确认 是阶段三 Task 14 明文
-// 要求的故障注入之一："真实制造一次库存不足，确认 erp-sales 的补偿链
-// 依然正确（订单没落库、库存没被占）"。crm-opportunity 侧的赢单状态
-// 不回滚由 Task 14 的 brickkit up 全链路验证覆盖（本组件从不回传失败
+// TestHandleOpportunityWon_库存不足时不建单确认 是故障注入之一："真实制造
+// 一次库存不足，确认 erp-sales 的补偿链依然正确（订单没落库、库存没被占）"。
+// crm-opportunity 侧的赢单状态不回滚由全链路验证覆盖（本组件从不回传失败
 // 给 crm-opportunity，见 opportunity_won.go 顶部注释）。
 func TestHandleOpportunityWon_库存不足时不建单确认(t *testing.T) {
 	requireE2EEnv(t)

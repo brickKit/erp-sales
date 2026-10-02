@@ -1,5 +1,5 @@
-// 阶段三 Task 6：org/owner 两维数据范围真实生效——对应设计计划 §1
-// "我的订单"和"本部门及下级的订单"两个视图。
+// org / owner 两维数据范围真实生效——"我的订单"和"本部门及下级的订单"
+// 两个视图。
 package repo
 
 import (
@@ -35,7 +35,7 @@ func TestOrder_InScope(t *testing.T) {
 
 // TestListOrders_org维前缀过滤 与 TestListOrders_owner维过滤 是数据范围
 // 真实生效的核心断言：授权范围必须下推进 SQL 的 WHERE，不能查出全部
-// 结果后在 Go 里再过滤（决策 53 的既有判据）。
+// 结果后在 Go 里再过滤（那样游标分页的每一页条数都不对）。
 func TestListOrders_org维前缀过滤(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()

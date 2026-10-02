@@ -1,4 +1,4 @@
-// 阶段三 Task 6：GetOrder/ListOrders 在 service 层的数据范围强制——
+// GetOrder/ListOrders 在 service 层的数据范围强制——
 // 直接用 repo 层建订单（绕开 tcc，tcc.ConfirmOrder/CancelOrder/ShipOrder
 // 需要真实的 mdm-customer/mdm-product/erp-inventory gRPC 依赖，本文件
 // 只测不依赖它们的 GetOrder/ListOrders 两条读路径）。

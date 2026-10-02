@@ -1,11 +1,11 @@
-// 真故障注入测试（设计计划 §9 第 2 条明确要求）：让 mdm-customer/
+// 真故障注入测试：让 mdm-customer/
 // mdm-product/erp-inventory 真的跑起来，真的返回库存不足、真的超时
 // （context.WithTimeout 掐短），断言订单确实没落库、库存确实没被占住、
 // 补偿确实执行了——用 mock 测这条链等于没测，要验的正是跨进程的部分。
 //
 // ⚠️ 这些测试需要三个真实依赖组件真的在跑，跟 TEST_PG_DSN 一样用环境
 // 变量判断要不要跳过：MDM_CUSTOMER_GRPC_ENDPOINT / MDM_PRODUCT_GRPC_ENDPOINT
-// / ERP_INVENTORY_GRPC_ENDPOINT（同 besdk.Endpoint() 认的格式，
+// / ERP_INVENTORY_GRPC_ENDPOINT（rt.Config.Endpoint 认的格式，
 // http://host:port）没有全部设置就跳过，不伪造数据也不用内存里的假实现
 // 代替。
 package tcc
@@ -33,7 +33,7 @@ import (
 	productv1 "github.com/brickKit/mdm-product/gen/mdm/product/v1"
 )
 
-const testWarehouseID = "1" // WH-EAST，迁移播种数据（同 erp-inventory 设计计划 §9 第 5 条）
+const testWarehouseID = "1" // WH-EAST，erp-inventory 迁移播种的仓库
 
 func requireE2EEnv(t *testing.T) {
 	t.Helper()
@@ -59,8 +59,8 @@ func testDB(t *testing.T) *sql.DB {
 }
 
 // realDB 连的是真实依赖容器（erp-inventory 等）真正在用的那个物理数据库
-// （brickkit_db），跟 testDB 连的 brickkit_test_db 物理分开（总纲"测试库
-// 与演示库分开"）——receiveRealStock/getRealBalance 直接读写 erp-inventory
+// （brickkit_db），跟 testDB 连的 brickkit_test_db 物理分开（测试库与演示库
+// 是两个库）——receiveRealStock/getRealBalance 直接读写 erp-inventory
 // 的 schema，必须用这个连接，不能跟 testDB 混用：erp-sales 自己的状态
 // （订单、预留跟踪）由本测试进程内的 orchestrator 直接操作，落在
 // testDB 没问题；但 erp-inventory 是一个真实、独立跑着的容器，它的
@@ -157,11 +157,9 @@ func createRealProduct(t *testing.T, ctx context.Context) string {
 // 的任何 Go 包（同 repo.go 里其余测试直接写 erp_sales 自己 schema 的
 // 既有判据，这里只是把 schema/role 换成了 erp_inventory）。
 //
-// ⚠️ 真实踩过的坑：这两个函数的 db 参数曾经传的是 testDB(t)
-// （TEST_PG_DSN/brickkit_test_db）——但"供后续真实 Reserve 调用去读写"
-// 这句话里的"真实 Reserve 调用"，打的是真实在跑的 erp-inventory
-// 容器，它读写的是 brickkit_db（总纲"测试库与演示库分开"，两者物理
-// 隔离），写进 brickkit_test_db 的库存它永远看不到。必须传 realDB(t)
+// ⚠️ 这两个函数的 db 参数必须是 realDB：后续的 Reserve 打的是真实在跑的
+// erp-inventory 容器，它读写的是 brickkit_db（与测试库物理隔离），写进
+// brickkit_test_db 的库存它永远看不到。必须传 realDB(t)
 // （REAL_PG_DSN），不能跟 erp-sales 自己状态用的 testDB(t) 混用。
 func receiveRealStock(t *testing.T, ctx context.Context, realDB *sql.DB, productID, qty string) {
 	t.Helper()
@@ -218,7 +216,7 @@ func newTestOrchestrator(db *sql.DB, timeout time.Duration) *Orchestrator {
 
 // e2eTestCtx 给"真的调 orch.CreateOrder"这条链路的测试造一个带 Claims 的
 // ctx——tcc.CreateOrder 会调 besdk.ScopeOf(ctx) 取 dept_path/owner_id
-// 做订单创建时快照（阶段三 Task 6，create.go 的既有注释），这些真故障
+// 做订单创建时快照（见 create.go），这些真故障
 // 注入测试直接调 orchestrator 层（跳过 REST/gRPC 入口本该经过的
 // RequirePermission），ctx 里从一开始就没有 Claims，ScopeOf 会 panic
 // ——同 service_test.go 的 authedCtx 是同一个判据（那边测 service 层，
@@ -296,7 +294,7 @@ func TestConfirmOrder_真实happy_path(t *testing.T) {
 	}
 }
 
-// TestConfirmOrder_真实库存不足 是设计计划 §9 第 2 条要求的故障注入之一：
+// TestConfirmOrder_真实库存不足 是故障注入之一：
 // 让 erp-inventory 真的返回库存不足（FailedPrecondition），断言订单
 // 确实没有被落库成 CONFIRMED、库存确实没被占住——不是 mock 一个错误
 // 回来就完事。
@@ -340,15 +338,15 @@ func TestConfirmOrder_真实库存不足(t *testing.T) {
 	}
 
 	// 库存确实没被占住——Reserve 请求整个失败，erp-inventory 自己的条件
-	// 更新连一件都不会加（设计计划 §2.2：判定与加锁是同一条语句）。
+	// 更新连一件都不会加（判定与加锁是同一条语句）。
 	after := getRealBalance(t, ctx, rdb, productID)
 	if after.ReservedQty != before.ReservedQty {
 		t.Fatalf("库存不足的 Reserve 不该留下任何占用，before=%s after=%s", before.ReservedQty, after.ReservedQty)
 	}
 }
 
-// TestResolveAfterTimeout_真实查到RESERVED 是设计计划 §4.5"薛定谔的
-// 超时"里"RESERVED → 当作成功继续"这条分支的直接测试：先用正常超时
+// TestResolveAfterTimeout_真实查到RESERVED 是"Reserve 超时之后查到 RESERVED
+// → 当作成功继续"这条分支的直接测试：先用正常超时
 // 真的 Reserve 一次（确保 erp-inventory 那边真的提交成功），再直接调
 // resolveAfterTimeout（reserve() 在观察到 Reserve 超时后内部会调的
 // 那个函数）验证它能用同一个 idempotency_key 正确查回真实的
@@ -453,8 +451,8 @@ func TestReserve_真实超时能自我恢复不panic不出假结果(t *testing.T
 	}
 }
 
-// TestResolveAfterTimeout_查询也超时时写入对账队列 是设计计划 §4.5
-// "查询也超时"分支的直接测试：GetReservationStatus 本身也超时，不阻塞
+// TestResolveAfterTimeout_查询也超时时写入对账队列 是"查询也超时"分支的
+// 直接测试：GetReservationStatus 本身也超时，不阻塞
 // 用户请求，写一行进 sales_order_reconciliation_queue 就返回。
 func TestResolveAfterTimeout_查询也超时时写入对账队列(t *testing.T) {
 	requireE2EEnv(t)
@@ -569,9 +567,8 @@ func requireWorkflowEnv(t *testing.T) {
 	}
 }
 
-// TestCompensateReserve_连续失败3次真建异常待办 是阶段三 Task 8 的验证
-// 标准第一段的直接测试："erp-sales 的一笔订单补偿连续失败 3 次，真的在
-// infra-workflow 里出现一条异常待办"——真拨号 infra-workflow、真调
+// TestCompensateReserve_连续失败3次真建异常待办 验补偿异常闭环的第一段：
+// "一笔订单补偿连续失败 3 次，真的在 infra-workflow 里出现一条异常待办"——真拨号 infra-workflow、真调
 // GetTaskStatus 查，不是断言"调用过某个 mock 函数"。第二段（处理这条
 // 待办后订单状态跟着变）由 consumer 包的
 // TestConsumer_补偿异常待办完成后恢复订单 覆盖——那一段不需要真的驱动
@@ -584,12 +581,9 @@ func requireWorkflowEnv(t *testing.T) {
 // 真的成功过；给一个不存在的 reservationID 直接调 compensateReserve，
 // CancelReservation 会干净地返回一个 NotFound 类错误（compensateReserve
 // 本来就把这类错误当"补偿失败"处理并继续累加计数，不影响本测试要验的
-// 行为）。这也刻意避开了 erp-inventory Receive/GetBalance 两个 REST-only
-// 端点——它们的 service 层调 besdk.ScopeOf(ctx)，走 gRPC 直连（ctx 里没有
-// Claims）会 panic 且 be-sdk-go 的 gRPC server 没有 panic-recovery
-// 拦截器，整个 erp-inventory 容器会崩溃（真机验证时发现的一个真实、
-// 独立于本次改动的平台级缺口，已记入 docs/dev/实测踩坑记录.md，不在
-// Task 8 范围内修——这里只是绕开，不是掩盖）。
+// 行为）。这也刻意避开了 erp-inventory 的 Receive / GetBalance：它们按调用者
+// 的仓库授权过滤，只有经过 RequirePermission 验签的 REST 请求才有 Claims，
+// 走 gRPC 直连会被拒绝。
 func TestCompensateReserve_连续失败3次真建异常待办(t *testing.T) {
 	requireE2EEnv(t)
 	requireWorkflowEnv(t)

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib" // §12.4：不用 lib/pq，驱动名注册为 "pgx"
+	_ "github.com/jackc/pgx/v5/stdlib" // 锁定栈用 pgx，不用 lib/pq；驱动名注册为 "pgx"
 )
 
 func testDB(t *testing.T) *sql.DB {
@@ -148,7 +148,7 @@ func TestFinalizeConfirm_非DRAFT状态拒绝(t *testing.T) {
 
 	// 第二次用不同的 idempotency_key 确认同一张已经 CONFIRMED 的订单——
 	// 必须被最后一道防线拦下，不能把 reservation_id 覆盖成另一个值
-	// （设计计划 §3.1：claim-first 只防同一个 key 重复，两个不同 key 打
+	// （claim-first 只防同一个 key 重复，两个不同 key 打
 	// 同一个 order_id 是客户端误用，靠锁行重新判断状态兜底）。
 	_, err = r.FinalizeConfirm(ctx, FinalizeConfirmInput{
 		IdempotencyKey: uniqueSuffix("confirm-2"), OrderID: order.ID, ReservationID: "2",
@@ -197,7 +197,7 @@ func TestFinalizeCancel_已取消再取消是幂等(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 不同 idempotency_key 再取消一次已经 CANCELLED 的订单——必须如实
-	//返回当前状态，不报错（设计计划 §2.1：CANCELLED 是终态，但重复取消
+	// 返回当前状态，不报错（CANCELLED 是终态，但重复取消
 	// 请求本身应该是幂等的，不是错误）。
 	again, err := r.FinalizeCancel(ctx, FinalizeCancelInput{
 		IdempotencyKey: uniqueSuffix("cancel-2"), OrderID: order.ID, Reason: "第二次",

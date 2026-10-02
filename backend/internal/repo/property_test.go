@@ -12,9 +12,8 @@ import (
 )
 
 // modelStep 是订单状态机的独立复述（不是照抄 write.go 的实现），用来跟
-// 真实落库结果交叉核对——这是 04-testing-standard.md §3.2 说的"删掉重写
-// 也该成立"的判据：这里描述的是订单状态机*应该*怎么走，不是"这段 Go
-// 代码现在怎么写的"。
+// 真实落库结果交叉核对——"把实现删掉重写也该成立"：这里描述的是订单状态机
+// *应该*怎么走，不是"这段 Go 代码现在怎么写的"。
 //
 //	DRAFT     -confirm-> CONFIRMED（唯一合法出边）
 //	DRAFT     -cancel->  CANCELLED
@@ -48,8 +47,8 @@ func modelStep(cur, op string) (next string, ok bool) {
 	}
 }
 
-// TestProperty_订单状态机不允许法外转移 是 04-testing-standard.md §3.2 对
-// "核心交易类组件"的强制要求。此前这条状态机只有一堆具体例子在测
+// TestProperty_订单状态机不允许法外转移：核心交易类组件的状态机要有属性测试。
+// 只有一堆具体例子在测
 // （TestFinalizeConfirm_DRAFT到CONFIRMED且发事件、
 // TestFinalizeCancel_已终态不能取消……），每条例子都是"我想到的这一种
 // 情形"，从没有随机操作序列攻击过它——比如"confirm 两次"“cancel 之后再
@@ -123,8 +122,7 @@ func TestProperty_订单状态机不允许法外转移(t *testing.T) {
 	})
 }
 
-// TestProperty_CreateOrder并发同key仅执行一次 补的是 04-testing-standard.md
-// §3.2 明确要求、此前项目里从没写过的那一半幂等性测试："多个并发请求带着
+// TestProperty_CreateOrder并发同key仅执行一次 补的是幂等性测试的另一半："多个并发请求带着
 // 同一个 idempotency_key 同时到达"，而不是"串行重放同一个 key 两次"
 // （已有的 TestCreateOrder_幂等 只验证了串行重放）。CreateOrder 是四个写
 // 命令里唯一不需要跨组件 gRPC 就能独立验证的一个，用它攻击

@@ -40,8 +40,7 @@ func natsURLForTest(t *testing.T) string {
 // testSubject 给消费者测试造一个测试私有的 subject，不直接用生产真实
 // subject。
 //
-// ⚠️ 实测踩坑（docs/dev/field-tested-pitfalls-log.md 类别 E 的 E2）：这几条
-// 测试原来直接订阅/发布到真实 subject（如 "finance.credit.rejected.v1"），
+// ⚠️ 如果这几条测试直接订阅/发布到真实 subject（如 "finance.credit.rejected.v1"），
 // 而同一台机器上 `brickkit up` 真实跑着的 erp-sales 容器订阅的是**同一个**
 // subject——NATS 核心发布订阅对同一 subject 的多个订阅者是广播，两边都会
 // 收到测试发布的消息，谁先把 event_inbox 那一行 INSERT 成功谁就真正执行
@@ -199,11 +198,10 @@ func createSuspendedOrderForConsumerTest(t *testing.T, r *repo.Repo) *repo.Order
 	return reloaded
 }
 
-// TestConsumer_补偿异常待办完成后恢复订单 验证设计计划 §4.4.4 的落地
-// 闭环：真发布 infra.workflow.task.completed.v1（action: APPROVED，
-// source 指向这张真实挂起的订单）→ 真订阅 → 真的把订单从 SUSPENDED
-// 恢复回 DRAFT。这条测试直接对应阶段三 Task 8 的验证标准："处理这条
-// 待办后 erp-sales 收到对应事件、订单状态跟着变"。
+// TestConsumer_补偿异常待办完成后恢复订单 验证补偿异常的闭环：真发布
+// infra.workflow.task.completed.v1（action: APPROVED，source 指向这张真实
+// 挂起的订单）→ 真订阅 → 真的把订单从 SUSPENDED 恢复回 DRAFT，即"人处理完
+// 这条待办后，订单状态跟着变"。
 func TestConsumer_补偿异常待办完成后恢复订单(t *testing.T) {
 	db := testDB(t)
 	nc, err := nats.Connect(natsURLForTest(t))
@@ -229,9 +227,8 @@ func TestConsumer_补偿异常待办完成后恢复订单(t *testing.T) {
 	// ⚠️ aggregate_id 必须每次运行都不同（同本文件 publishEvent 的既有
 	// 注释：event_inbox 按 (subject, aggregate_id, version) 单调去重且
 	// 持久化，不会在两次 go test 之间清空）——用 order.ID 天然满足，
-	// 每次都是一笔全新订单；这里曾经写死过字面量 "999"，第二次跑
-	// 这条测试时被去重表悄悄吞掉，看起来像是"恢复没生效"，实际是测试
-	// 自己的幂等键复用踩了这张表的既有判据。
+	// 每次都是一笔全新订单。写死一个字面量时，第二次跑这条测试会被去重表
+	// 悄悄吞掉，看起来像是"恢复没生效"。
 	taskID := "task-" + order.ID
 	payload := fmt.Sprintf(
 		`{"task_id":%q,"action":"APPROVED","actor_sub":"u_reviewer","comment":"已人工处理",`+

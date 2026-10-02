@@ -64,9 +64,8 @@ func testDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// TestEnsureAllMonthly_幂等且与迁移分区命名一致 是 erp-inventory 设计计划
-// §9 第 8 条那个真 bug 的同款回归测试（本组件的月分区维护是同一套代码
-// 复用）：迁移建的初始分区名必须和这里生成的名字完全一样
+// TestEnsureAllMonthly_幂等且与迁移分区命名一致：迁移建的初始分区名必须和
+// 这里生成的名字完全一样
 // （"表名_YYYY_MM_01"），否则 to_regclass 查不到已存在的分区，会尝试
 // 新建同一段时间范围的分区，撞上 PostgreSQL 分区范围不许重叠的报错。
 // 这条测试连跑两次 ensureAllMonthly 验证幂等，且同时覆盖

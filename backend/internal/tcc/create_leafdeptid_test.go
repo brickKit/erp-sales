@@ -1,5 +1,4 @@
-// leafDeptID 是纯函数，不需要真实数据库/gRPC 依赖——阶段三 Task 6
-// 新增，见 create.go 同名函数注释。
+// leafDeptID 是纯函数，不需要真实数据库/gRPC 依赖，见 create.go 同名函数注释。
 package tcc
 
 import "testing"

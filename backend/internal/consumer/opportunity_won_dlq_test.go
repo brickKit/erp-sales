@@ -1,11 +1,10 @@
-// 阶段三 Task 14 明文要求的验证之一："DLQ 进出各一遍：重试耗尽后消息
-// 真的进 DLQ、hop_count > 5 真的被丢弃、能被重新投递——这是阶段二
-// be-sdk-go 的 SDK 层能力，本阶段第一次在真实业务场景下触发它"。
+// DLQ 进出各一遍：hop_count > 5 的消息真的被转进 DLQ、不调用 handler，
+// 之后同一条业务消息以正常的 hop_count 重新投递能被正常处理。
 //
-// 这条测试用 crm.opportunity.won.v1（本阶段新增的真实业务事件）而不是
-// 一个合成的占位 subject，满足"真实业务场景"这一条；DLQ 判定逻辑本身
+// 这条测试用真实的业务事件 crm.opportunity.won.v1 而不是一个合成的占位
+// subject，验的是这条真实链路上 DLQ 的行为；DLQ 判定逻辑本身
 // （hop_count > 5 直接转发到 dlq.<subject>，不调用 fn）完全在
-// besdk.Consume 内部，这里只是首次让它在这条真实链路上触发一次。
+// besdk.Consume 内部。
 //
 // ⚠️ 用一个刻意不存在的 customer_id，不需要真的建一条活跃客户——
 // "fn 被调用过、且真的报了客户不存在、真的建了异常待办"与"fn 根本没被
@@ -59,8 +58,7 @@ func publishOpportunityWon(t *testing.T, nc *nats.Conn, aggregateID, hopCount, p
 // event_inbox 持久化去重），这次真的被 fn 摸到——客户不存在会走异常
 // 待办分支，用"异常待办真的被建出来"证明 fn 这次真的执行了，与①形成
 // 对照，证明 DLQ 不是"丢了就真的丢了"，人工重放这个动作本身是可行的
-// （infra-dlq-monitor 的管理界面不在本阶段范围，这里验的是 SDK 层
-// 机制本身）。
+// （DLQ 的监控与管理界面不归本组件，这里验的是 SDK 层机制本身）。
 func TestOpportunityWon_hopCount超限进DLQ且可重新投递(t *testing.T) {
 	requireOpportunityWonDLQEnv(t)
 	db := testDB(t)

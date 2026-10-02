@@ -31,7 +31,7 @@ func createDraftOrderForSuspendTest(t *testing.T, db *sql.DB) *Order {
 }
 
 // TestIncrementCompensationAttempts_满3次转SUSPENDED且reason精确 验证
-// §4.4.4 的落地前提：ExceptionReasonCompensationFailed 这个常量真的被
+// 补偿异常闭环的前提：ExceptionReasonCompensationFailed 这个常量真的被
 // 写进了 suspended_reason——ResumeFromExceptionTx 的精确匹配依赖这一点。
 func TestIncrementCompensationAttempts_满3次转SUSPENDED且reason精确(t *testing.T) {
 	db := testDB(t)
@@ -72,8 +72,7 @@ func TestIncrementCompensationAttempts_满3次转SUSPENDED且reason精确(t *tes
 	}
 }
 
-// TestResumeFromExceptionTx_精确匹配reason才恢复 是设计计划 §4.4.4 那条
-// 判据的直接测试：两条 SUSPENDED 来源共用同一个 status 值，只有 reason
+// TestResumeFromExceptionTx_精确匹配reason才恢复：两条 SUSPENDED 来源共用同一个 status 值，只有 reason
 // 能区分，恢复必须精确匹配，不能只判 status。
 func TestResumeFromExceptionTx_精确匹配reason才恢复(t *testing.T) {
 	db := testDB(t)
