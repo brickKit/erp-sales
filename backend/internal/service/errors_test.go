@@ -25,3 +25,28 @@ func TestListOrders_非法cursor映射成InvalidArgument(t *testing.T) {
 		t.Fatalf("非法 cursor 应映射成 InvalidArgument，实际 %v（%v）", got, err)
 	}
 }
+
+// BatchGetOrder 的约定：找到的放 orders，找不到的 id 放 missing_ids，不报错
+// ——调用方用它防 N+1，一批里有一个 id 失效不该让整批失败。
+func TestBatchGetOrder_找不到的id进missing不报错(t *testing.T) {
+	svc, r := newTestService(t)
+	ctx := context.Background()
+	order, err := r.CreateOrder(ctx, repo.CreateOrderInput{
+		IdempotencyKey: uniqueSuffix("svc-batchget"), CustomerID: "C-1", CustomerName: "测试客户",
+		Items: testItems(), DeptPath: "/1/12/", OwnerID: "u_owner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const absent = "987654321987"
+	found, missing, err := svc.BatchGetOrder(ctx, []string{order.ID, absent})
+	if err != nil {
+		t.Fatalf("有一个 id 不存在时不该整批报错，实际：%v", err)
+	}
+	if len(found) != 1 || found[0].ID != order.ID {
+		t.Fatalf("期望找到 1 张订单 %s，实际 %+v", order.ID, found)
+	}
+	if len(missing) != 1 || missing[0] != absent {
+		t.Fatalf("期望 missing=[%s]，实际 %v", absent, missing)
+	}
+}

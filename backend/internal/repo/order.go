@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -116,7 +117,7 @@ func (r *Repo) BatchGetOrder(ctx context.Context, ids []string) (found []*Order,
 	for _, id := range ids {
 		o, err := r.GetOrder(ctx, id)
 		if err != nil {
-			if err == ErrNotFound {
+			if errors.Is(err, ErrNotFound) {
 				missing = append(missing, id)
 				continue
 			}
