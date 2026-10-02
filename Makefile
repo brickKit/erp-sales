@@ -111,10 +111,12 @@ image:  ## brickkit build 本组件，并确认镜像里有 sh + wget（健康�
 	  && echo "✓ 镜像 $(REPO):$(VERSION) 里有 sh + wget + component.yaml"
 
 ##@ 本地开发数据（只给本地 / 演示用，不进部署与 CI）
-seed:  ## 灌示例订单（幂等，可重复跑）。要求本组件、infra/iam-casdoor、infra/authz、mdm/customer、mdm/product 都已 brickkit up 起来
+seed:  ## 灌示例订单（幂等，可重复跑）。要求本组件、infra/iam-casdoor、infra/authz、mdm/customer、mdm/product、erp/inventory 都已 brickkit up 起来
 	@# 建单 / 确认 / 发货 / 取消走 REST，要真实的应用 JWT，订单的客户与产品取自 mdm 的种子数据，
-	@# 所以先把它们的种子灌好；缺了哪个就在这里点名失败，不让后面的 curl 报一串看不懂的错。
-	@for dep in infra/iam-casdoor infra/authz mdm/customer mdm/product; do \
+	@# 所以先把它们的种子灌好；确认与发货要向默认仓库预留 / 出库，erp/inventory 的种子给
+	@# mdm 的种子产品灌库存（它要排在 mdm/product 之后）。缺了哪个就在这里点名失败，不让
+	@# 后面的 curl 报一串看不懂的错。
+	@for dep in infra/iam-casdoor infra/authz mdm/customer mdm/product erp/inventory; do \
 	   python3 -c 'import sys, yaml; ids = {c["id"] for c in (yaml.safe_load(open(sys.argv[1])) or {}).get("components") or []}; sys.exit(0 if sys.argv[2] in ids else 1)' $(ROOT)/brickkit.yaml $$dep \
 	   || { echo "✗ make seed 需要 $$dep 在项目里（brickkit.yaml 里没有）"; exit 1; }; \
 	 done
@@ -122,6 +124,7 @@ seed:  ## 灌示例订单（幂等，可重复跑）。要求本组件、infra/i
 	@$(MAKE) --no-print-directory -C $(ROOT)/components/infra/authz seed
 	@$(MAKE) --no-print-directory -C $(ROOT)/components/mdm/customer seed
 	@$(MAKE) --no-print-directory -C $(ROOT)/components/mdm/product seed
+	@$(MAKE) --no-print-directory -C $(ROOT)/components/erp/inventory seed
 	@bash scripts/seed.sh
 
 seed-clean:  ## 撤销 seed 灌的订单（赢单自动转成的订单不归这里，归 crm/opportunity 的 seed-clean）

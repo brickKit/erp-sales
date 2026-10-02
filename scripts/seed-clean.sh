@@ -18,6 +18,11 @@ DECLARE
   oids text[] := ARRAY[]::text[];
   k text;
 BEGIN
+  -- 迁移还没在这个库里跑过（schema 是 db-init 建的空壳）：没有可撤销的种子，什么都不做。
+  IF to_regclass('erp_sales.command_idempotency') IS NULL THEN
+    RAISE NOTICE 'erp_sales 还没有表（迁移没跑过），没有种子订单要删';
+    RETURN;
+  END IF;
   FOREACH k IN ARRAY ARRAY[
     'seed-order-1','seed-order-2','seed-order-3','seed-order-4','seed-order-5'
   ] LOOP

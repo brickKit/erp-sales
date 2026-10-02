@@ -13,7 +13,8 @@
 # 那是测试（backend/internal/tcc、backend/internal/consumer）的事，不是演示数据。
 #
 # 前提（Makefile 的 seed 目标先核对并灌好）：infra/iam-casdoor 与 infra/authz 的种子身份，
-# mdm/customer 与 mdm/product 的种子客户 / 产品。
+# mdm/customer 与 mdm/product 的种子客户 / 产品，erp/inventory 给这些产品在默认仓库
+# （WH-EAST，DEFAULT_WAREHOUSE_ID）灌的库存——没有库存，确认与发货都会失败。
 #
 # 用法：make -C components/erp/sales seed
 set -euo pipefail
@@ -53,18 +54,18 @@ mkorder() { # token key cust prod qty -> order id
     -d "{\"idempotency_key\":\"$2\",\"customer_id\":\"$3\",\"items\":[{\"product_id\":\"$4\",\"qty\":\"$5\"}]}" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'
 }
-confirm_order() { # token id key
-  curl -s -H "Authorization: Bearer $1" -H "Content-Type: application/json" -X POST "$SALES_REST/erp/sales/orders/$2/confirm" \
-    -d "{\"idempotency_key\":\"$3\"}" >/dev/null
+# 状态命令：答 2xx 才算成功，否则带上响应体大声失败。确认要向 DEFAULT_WAREHOUSE_ID
+# 预留库存、还要过信用额度，任何一步不过都答 4xx；不看状态码，订单会悄悄停在 DRAFT。
+order_cmd() { # token id action body
+  local out code
+  out="$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $1" -H "Content-Type: application/json" \
+    -X POST "$SALES_REST/erp/sales/orders/$2/$3" -d "$4")"
+  code="${out##*$'\n'}"
+  case "$code" in 2??) ;; *) die "订单 $2 的 $3 答 $code：${out%$'\n'*}" ;; esac
 }
-ship_order() { # token id key
-  curl -s -H "Authorization: Bearer $1" -H "Content-Type: application/json" -X POST "$SALES_REST/erp/sales/orders/$2/ship" \
-    -d "{\"idempotency_key\":\"$3\"}" >/dev/null
-}
-cancel_order() { # token id key reason
-  curl -s -H "Authorization: Bearer $1" -H "Content-Type: application/json" -X POST "$SALES_REST/erp/sales/orders/$2/cancel" \
-    -d "{\"idempotency_key\":\"$3\",\"reason\":\"$4\"}" >/dev/null
-}
+confirm_order() { order_cmd "$1" "$2" confirm "{\"idempotency_key\":\"$3\"}"; }   # token id key
+ship_order()    { order_cmd "$1" "$2" ship "{\"idempotency_key\":\"$3\"}"; }      # token id key
+cancel_order()  { order_cmd "$1" "$2" cancel "{\"idempotency_key\":\"$3\",\"reason\":\"$4\"}"; }   # token id key reason
 
 echo "── ① dev.superuser：3 条订单，覆盖 CONFIRMED/SHIPPED/CANCELLED ──"
 O1="$(mkorder "$SUPERUSER_TOKEN" seed-order-1 "$CUST1" "$PROD1" 5)"
