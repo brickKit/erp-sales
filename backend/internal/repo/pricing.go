@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math/big"
+	"regexp"
 
 	besdk "github.com/brickKit/be-sdk-go"
 
@@ -35,8 +36,8 @@ type PriceResult struct {
 // desc, id desc) 排序，第一条命中的赢（设计计划 §3.2）。数量必须达到
 // min_quantity 才命中；生效日期区间用 CURRENT_DATE 过滤。
 func findPriceTx(ctx context.Context, tx *sql.Tx, in PriceInput) (*PriceResult, error) {
-	if _, err := decimal.Parse(in.Qty); err != nil {
-		return nil, fmt.Errorf("%w: qty 不是合法数字：%q", ErrInvalidArgument, in.Qty)
+	if err := validateQty(in.Qty); err != nil {
+		return nil, err
 	}
 
 	row := tx.QueryRowContext(ctx, `
@@ -71,6 +72,25 @@ func findPriceTx(ctx context.Context, tx *sql.Tx, in PriceInput) (*PriceResult, 
 		return nil, err
 	}
 	return &PriceResult{ProductID: in.ProductID, UnitPrice: unitPrice, Discount: discount, TaxRate: taxRate, Subtotal: subtotal}, nil
+}
+
+// qtyPattern 是数量允许的写法：不带符号的十进制数，整数最多 12 位、小数
+// 最多 6 位，正好装进 sales_order_items.qty 的 NUMERIC(18,6)。超出的位数
+// 落库时会被舍掉或溢出，与按原值算出的小计对不上。
+var qtyPattern = regexp.MustCompile(`^[0-9]{1,12}(\.[0-9]{1,6})?$`)
+
+// validateQty 校验一个数量（建单、试算与赢单转单都经过这里）：只认
+// qtyPattern 的写法，且必须大于 0。"NaN"、"Inf"、"1e3" 之类写法一律拒绝：
+// NaN 落进 NUMERIC 后排在一切数字之上，CHECK (qty > 0) 也拦不住它。
+func validateQty(qty string) error {
+	if !qtyPattern.MatchString(qty) {
+		return fmt.Errorf("%w: qty 必须是大于 0 的十进制数（整数最多 12 位、小数最多 6 位）：%q", ErrInvalidArgument, qty)
+	}
+	q, err := decimal.Parse(qty)
+	if err != nil || q.Sign() <= 0 {
+		return fmt.Errorf("%w: qty 必须大于 0：%q", ErrInvalidArgument, qty)
+	}
+	return nil
 }
 
 // computeSubtotal = qty * unit_price * (1 - discount)，十进制精确计算，

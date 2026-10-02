@@ -31,7 +31,9 @@ func TestParse_只认普通十进制写法(t *testing.T) {
 			t.Fatalf("%q 应能解析：%v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "1/3", "1e3", ".5", "1.", "abc", " 1"} {
+	// NaN 类：strconv.ParseFloat 与 big.Rat 认得、却不是十进制数字的写法
+	for _, bad := range []string{"", "1/3", "1e3", ".5", "1.", "abc", " 1",
+		"NaN", "nan", "Inf", "+Inf", "-Inf", "Infinity", "-Infinity", "0x10", "1_000", "1E3"} {
 		if _, err := Parse(bad); err == nil {
 			t.Fatalf("%q 不该被接受", bad)
 		}
