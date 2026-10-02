@@ -17,7 +17,7 @@ The AI guide to developing this component. How to use it, its boundaries and con
 | `backend/internal/repo/order.go` | Order types and statuses, `GetOrder`, `ListOrders` (scope, filters, keyset paging), `BatchGetOrder`, `GetOrderStatus` |
 | `backend/internal/repo/pricing.go` | `validateQty`, the price rule lookup `findPriceTx`, `CalculatePriceDryRun` |
 | `backend/internal/repo/stats.go` | `StatsSummary` for `GET /stats/summary` |
-| `backend/internal/repo/snapshot.go` | The customer credit limit copy (`UpsertCustomerSnapshotCreditLimitTx`, `GetCustomerSnapshotTx`) |
+| `backend/internal/repo/snapshot.go` | The customer credit limit copy (`UpsertCustomerSnapshotCreditLimitTx`, `GetCustomerSnapshotTx`); `RefreshCustomerSnapshot` in `write.go` refreshes it at confirmation |
 | `backend/internal/repo/suspend.go` | `SuspendOrderTx`, the compensation failure counter, `ResumeFromExceptionTx` |
 | `backend/internal/repo/repo.go` | Sentinel errors, `Order.InScope`, `parseID` |
 | `backend/internal/decimal/decimal.go` | Exact decimal arithmetic on strings (big.Rat from the standard library), rounding half away from zero to cents |
@@ -49,7 +49,7 @@ The AI guide to developing this component. How to use it, its boundaries and con
 set -a; . ../../../.env; set +a
 export TEST_PG_DSN="postgres://postgres:${POSTGRES_PASSWORD}@localhost:5432/brickkit_test_db?sslmode=disable"
 make test                    # every package ends in "ok"; refuses to run without TEST_PG_DSN
-go test ./... -count=1 -v | grep -- '--- SKIP'   # only the tests that need real dependencies (11, see below)
+go test ./... -count=1 -v | grep -- '--- SKIP'   # only the tests that need real dependencies (14, see below)
 make check-version dag-check contract-check import-scan module-check   # each prints one ✓ line
 make docs-check              # "0 with errors, 0 warnings"
 # migrations, as the login role:
@@ -57,11 +57,11 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw
   PG_PASSWORD="$ERP_SALES_DB_PASSWORD" PG_SCHEMA=erp_sales make migrate-idempotent   # ✓ 迁移幂等
 ```
 
-The skipped tests (in `backend/internal/tcc/confirm_test.go`, `backend/internal/tcc/opportunity_won_test.go`, `backend/internal/consumer/opportunity_won_dlq_test.go`) drive real `mdm/customer`, `mdm/product`, `erp/inventory` and `infra/workflow` containers: real insufficient stock, real timeouts. They run from the project root with `make test-cross ID=erp/sales`, which injects the dependency addresses. After `buf generate` (contracts changed), the contract package needs a new tag: see Pitfalls. On a real machine, from the project root: `make verify ID=erp/sales ROUTE=/erp/sales/orders FOCUS=1` builds the image, starts this component with its dependencies, checks migration, health and the permission check, runs a focus run, and tears down.
+The skipped tests (in `backend/internal/tcc/confirm_test.go`, `backend/internal/tcc/opportunity_won_test.go`, `backend/internal/tcc/snapshot_refresh_test.go`, `backend/internal/consumer/opportunity_won_dlq_test.go`) drive real `mdm/customer`, `mdm/product`, `erp/inventory` and `infra/workflow` containers: real insufficient stock, real timeouts. They run from the project root with `make test-cross ID=erp/sales`, which injects the dependency addresses. After `buf generate` (contracts changed), the contract package needs a new tag: see Pitfalls. On a real machine, from the project root: `make verify ID=erp/sales ROUTE=/erp/sales/orders FOCUS=1` builds the image, starts this component with its dependencies, checks migration, health and the permission check, runs a focus run, and tears down.
 
 ## Design decisions
 
-- **Confirmation is a TCC chain**, local checks first: customer, products, credit limit (local copy, before any reservation), then `Reserve`, then the local confirmation with the event in one transaction; only a failure after `Reserve` is compensated.
+- **Confirmation is a TCC chain**, local checks first: customer, products, credit limit (the local copy, refreshed from the customer `BatchGet` just made, before any reservation), then `Reserve`, then the local confirmation with the event in one transaction; only a failure after `Reserve` is compensated.
 - **A `Reserve` timeout is never answered with `CancelReservation`**: the reservation state is asked first (`GetReservationStatus`); unknown even then → a row in `sales_order_reconciliation_queue`, `503` to the caller.
 - **Compensation retries in place, three times**, under the same idempotency key and without the caller's cancellation; the third failure suspends the order and opens an exception task.
 - **Not enough stock fails the whole order**; there is no partial reservation.
@@ -77,6 +77,7 @@ The skipped tests (in `backend/internal/tcc/confirm_test.go`, `backend/internal/
 |---|---|---|
 | Call `CancelReservation` right after a `Reserve` timeout | Stock that was reserved is released while the order goes on, or a failed reservation is treated as success; the numbers drift with no error | A missing response does not mean the request was not processed; `resolveAfterTimeout` asks first |
 | Check the credit limit after `Reserve` | An order clearly over its limit first takes stock, then is rejected and compensated | The local check is free; it runs before any reservation |
+| Judge the credit limit from the event-fed copy alone | Installed into a project that already has customers, every confirmation answers `400 … exceeds limit 0`; a limit lowered while this component was down is never seen | Core NATS never replays; `checkCredit` refreshes the copy from step ①'s `BatchGet` (by `version`) before reading it |
 | Use the `*System` clients on a request path, or the plain clients in an event handler | Request path: the response silently contains rows the user may not see. Event handler: the call goes out with no token | `UserClient` forwards the caller; event handlers have no caller (`make gates` runs `system-client-scan`) |
 | Reuse `CreateOrder` / `ConfirmOrder` for the won-opportunity path | `besdk.ScopeOf` panics in the event handler: there are no claims | `createOrderForOpportunity` / `confirmOrderForOpportunity` take ownership from the event |
 | Return an error from `opportunityWonHandler` expecting a redelivery | The won event is never seen again | `besdk.Consume` uses core NATS: a handler error is logged, not redelivered |

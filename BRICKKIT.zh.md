@@ -8,9 +8,9 @@
 
 - 订单与订单行（`sales_orders`、`sales_order_items`）：报价就是 `DRAFT` 状态的订单；`CONFIRMED`、`SHIPPED`、`CANCELLED`（终态）和 `SUSPENDED` 由下文的命令与事件推出。产品 SKU、名称、单位、价格都是建单时的快照。状态集里有 `COMPLETED` 与 `CLOSED`，但还没有命令能走到它们。
 - 定价：有序的价格表（`pricelists`、`pricelist_items`），第一条命中的规则赢（产品级、分类级、全局依次；最小数量大的优先）。价格一律在这里算；`POST /price/dry-run` 就是为了让前端永远不自己算钱。
-- 确认订单的编排：校验客户与产品、本地校验信用额度、预留库存、在同一个事务里确认并写事件；本地确认失败时补偿（释放预留）；补偿连续失败三次把订单标成 `SUSPENDED`。
+- 确认订单的编排：校验客户与产品、校验信用额度、预留库存、在同一个事务里确认并写事件；本地确认失败时补偿（释放预留）；补偿连续失败三次把订单标成 `SUSPENDED`。
 - 把赢单的商机（`crm.opportunity.won.v1`）转成已确认的订单；订单在 `source_opportunity_id` 里记住来源商机。
-- 每个客户信用额度的本地副本（`customer_snapshots`），靠 `mdm.customer.*` 事件维护。
+- 每个客户信用额度的本地副本（`customer_snapshots`），靠 `mdm.customer.*` 事件维护，每次确认订单时再用 `mdm/customer` 的回答刷新。
 - 事件 `sales.order.created.v1`（在订单确认时发，不是在建草稿时）、`sales.order.cancelled.v1`、`sales.order.shipped.v1`。
 
 **不拥有**
@@ -28,7 +28,7 @@
 - **NATS** 在 `NATS_URL` 可达：事件经 Outbox 表和后台推送循环发出，消费的事件（见契约索引）也从这里进来。NATS 不可达时组件照样启动，要发的事件留在 Outbox 里。
 - **仓库**：`erp/inventory` 里的一个仓库，把它的 ID 填进 `DEFAULT_WAREHOUSE_ID`：每次确认都从这一个仓库预留。BrickEnterprise 项目里 `erp/inventory` 的迁移预置了仓库 `1`（`WH-EAST`）。
 - **价格**：迁移预置了一条全局规则（单价 `100.00`、无折扣、税率 `0.13`），让订单至少能定价。没有管理价格表的接口；真实价格是往 `pricelist_items` 里插的行。
-- **信用额度**：只有客户的信用额度（从 `mdm.customer.created.v1` / `.updated.v1` 事件复制过来）够用，订单才能确认。事件还没到的客户额度是 `0`，它的订单确认不了：先起本组件再建客户，或者重放客户事件。
+- **信用额度**：只有客户的信用额度够用，订单才能确认。确认时本来就要向 `mdm/customer` 要这个客户，它的回答先刷新本地副本再判，所以在本组件装进来之前就有的客户、本组件停机期间改过额度的客户，都按当前额度判。副本只按 `version` 往前走；平时由 `mdm.customer.*` 事件保持最新。
 - **部门**：用户的 `dept_path`（由 `infra/authz` 签发）决定 `dept` 视图里看到什么。还没分到任何部门的用户只看得到自己名下的订单；要看全公司的人应当分在根部门。
 - **授权**（`infra/authz`）与**身份**（`infra/iam-casdoor`，或任何提供 JWKS 的 IAM）要能经 `AUTHZ_BUNDLE_URL`、`IAM_JWKS_URL` 访问到，REST 路由才不只回错误。它们是配置，不是依赖。
 - 演示数据（可选）：本组件、`infra/iam-casdoor`、`infra/authz`、`mdm/customer`、`mdm/product` 都在跑之后，在组件目录 `make seed` 经真实 REST 接口建五张不同状态的订单（会先灌好前面几个组件的种子）。

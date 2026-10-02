@@ -10,7 +10,7 @@
 
 | 不在这里 | 归谁 | 为什么 |
 |---|---|---|
-| 客户是谁、信用额度的值 | `mdm/customer` | 建单时 `BatchGet` 校验并复制到订单上；额度靠它的事件在本地保存一份 |
+| 客户是谁、信用额度的值 | `mdm/customer` | 建单时 `BatchGet` 校验并复制到订单上；额度靠它的事件在本地保存一份，确认时再用 `BatchGet` 的结果刷新 |
 | 产品是什么、单位 | `mdm/product` | 同上：建单时校验并快照 |
 | 库存够不够、预留 | `erp/inventory` | 本组件只发起预留；"够不够"由库存那边自己 SQL 里的一个条件判定。发起方从不自己算可用量 |
 | 应收、凭证、权威的已用额度 | `erp/finance` | 它消费 `sales.order.created.v1`，事后可以否决信用（`finance.credit.rejected.v1`） |
@@ -27,7 +27,7 @@
 | `sales_orders` | 按 `created_at` 月分区 | 订单头：客户与名称快照、状态、`total_amount NUMERIC(18,2)`、`dept_id` / `dept_path` / `owner_id`（创建时快照）、`reservation_id`、`compensation_attempts`、`suspended_reason`、`source_opportunity_id`（手工单为空）、`version` |
 | `sales_order_items` | 按订单头的 `created_at`（`order_created_at`）月分区 | SKU、名称、单位的快照，`qty NUMERIC(18,6)`（`CHECK qty > 0`）、单价、折扣（`0 ≤ d < 1`）、税率、小计 |
 | `pricelists`、`pricelist_items` | 否 | 有序规则：`applied_on` 为 `PRODUCT` / `CATEGORY` / `GLOBAL`、`min_quantity`、生效日期、单价、折扣、`price_limit`、税率 |
-| `customer_snapshots` | 否 | `credit_limit`（来自 `mdm.customer.*`）、`credit_exposure`（还没有任何东西维护它：见未决问题）、`version` |
+| `customer_snapshots` | 否 | `credit_limit`（来自 `mdm.customer.*`，确认时刷新）、`credit_exposure`（还没有任何东西维护它：见未决问题）、`version` |
 | `sales_order_reconciliation_queue` | 否 | 预留状态一直未知的每次确认一行 |
 | `command_idempotency` | 否 | 四个命令的先声明式幂等 |
 | `event_outbox`、`event_inbox` | 按 `created_at` 周分区 | 推送循环读的 Outbox；消费去重用的 Inbox |
@@ -56,12 +56,12 @@ REST 前缀 `/erp/sales`，每条路由都带 `assembly.yaml` 里的键：`GET /
 ```
 ① BatchGet 客户（mdm/customer）     失败 → 返回，无需补偿
 ② BatchGet 产品（mdm/product）      失败 → 返回，无需补偿
-③ 用本地副本校验信用额度             超额度 → 返回（不走网络；在任何预留之前）
+③ 校验信用额度                       先用①的回答刷新本地副本再判；超额度 → 返回（不多一次调用；在任何预留之前）
 ④ Reserve（erp/inventory）          被拒 → 返回；超时 → 先查状态，见下
 ⑤ 确认 + Outbox，同一事务            失败 → 补偿：CancelReservation
 ```
 
-信用校验刻意排在预留之前：不然一张明显超额度的单会先占库存、再被拒、再补偿，白忙一场。`Reserve` 超时绝不用 `CancelReservation` 回应：没收到响应不代表请求没被处理。由 `GetReservationStatus` 决定：`RESERVED` → 继续⑤；查不到 → `503`，带同一个幂等键重试；`CANCELLED` → 失败；查状态也超时 → 往 `sales_order_reconciliation_queue` 写一行、回 `503`，不阻塞用户请求。被拒（库存不足）整单失败：没有部分预留，这比 Odoo 严，是刻意的——部分成功会把补偿变成"补偿一部分"。补偿失败时原地重试，用同一个幂等键，不跟着调用方取消（已经成功的预留，客户端断开了也必须释放），间隔逐次拉长；连续失败三次把订单标成 `SUSPENDED`，并给 `EXCEPTION_ASSIGNEE_SUB` 开一条异常待办（幂等键由这次确认的键派生，同一个命令重放拿到的是同一条待办）。绝不无限重试：补偿的补偿比不补偿更糟。对依赖的每次调用各自限时（5 秒）；不需要补偿的命令（建单、取消、发货）超时就失败，由调用方带同一个键重试。
+信用校验刻意排在预留之前：不然一张明显超额度的单会先占库存、再被拒、再补偿，白忙一场。它不只信事件维护的副本：事件走 NATS 核心订阅、从不重放，本组件装进来之前就有的客户没有副本（额度 `0`，每张单都被拒），本组件停机期间的改动也永远到不了。第①步手里已经有这个客户的 `credit_limit` 与 `version`，所以先用它刷新副本（只按 `version` 往前走），再读副本判。`Reserve` 超时绝不用 `CancelReservation` 回应：没收到响应不代表请求没被处理。由 `GetReservationStatus` 决定：`RESERVED` → 继续⑤；查不到 → `503`，带同一个幂等键重试；`CANCELLED` → 失败；查状态也超时 → 往 `sales_order_reconciliation_queue` 写一行、回 `503`，不阻塞用户请求。被拒（库存不足）整单失败：没有部分预留，这比 Odoo 严，是刻意的——部分成功会把补偿变成"补偿一部分"。补偿失败时原地重试，用同一个幂等键，不跟着调用方取消（已经成功的预留，客户端断开了也必须释放），间隔逐次拉长；连续失败三次把订单标成 `SUSPENDED`，并给 `EXCEPTION_ASSIGNEE_SUB` 开一条异常待办（幂等键由这次确认的键派生，同一个命令重放拿到的是同一条待办）。绝不无限重试：补偿的补偿比不补偿更糟。对依赖的每次调用各自限时（5 秒）；不需要补偿的命令（建单、取消、发货）超时就失败，由调用方带同一个键重试。
 
 **定价**：一张有序规则表，第一条命中的赢——按特异度（`PRODUCT`、`CATEGORY`、`GLOBAL`），再按 `min_quantity` 降序，再按 ID 降序；生效日期对照当天。一条规则同时给出单价、折扣、`price_limit` 与税率；规则从不叠加，所以"为什么是这个价"永远只有一个答案。小计 = 数量 × 单价 × (1 − 折扣)，精确计算、最后四舍五入（远离零）到分一次（与 `NUMERIC(18,2)` 的舍入一致）。还没有价格表的接口；迁移预置一条全局规则，让整条链跑得通。
 

@@ -17,7 +17,7 @@
 | `backend/internal/repo/order.go` | 订单类型与状态、`GetOrder`、`ListOrders`（范围、过滤、keyset 分页）、`BatchGetOrder`、`GetOrderStatus` |
 | `backend/internal/repo/pricing.go` | `validateQty`、价格规则查找 `findPriceTx`、`CalculatePriceDryRun` |
 | `backend/internal/repo/stats.go` | `GET /stats/summary` 的 `StatsSummary` |
-| `backend/internal/repo/snapshot.go` | 客户信用额度副本（`UpsertCustomerSnapshotCreditLimitTx`、`GetCustomerSnapshotTx`） |
+| `backend/internal/repo/snapshot.go` | 客户信用额度副本（`UpsertCustomerSnapshotCreditLimitTx`、`GetCustomerSnapshotTx`）；确认时由 `write.go` 的 `RefreshCustomerSnapshot` 刷新 |
 | `backend/internal/repo/suspend.go` | `SuspendOrderTx`、补偿失败计数、`ResumeFromExceptionTx` |
 | `backend/internal/repo/repo.go` | 哨兵错误、`Order.InScope`、`parseID` |
 | `backend/internal/decimal/decimal.go` | 字符串上的精确十进制运算（标准库的 big.Rat），四舍五入（远离零）到分 |
@@ -49,7 +49,7 @@
 set -a; . ../../../.env; set +a
 export TEST_PG_DSN="postgres://postgres:${POSTGRES_PASSWORD}@localhost:5432/brickkit_test_db?sslmode=disable"
 make test                    # 每个包都是 "ok"；没设 TEST_PG_DSN 直接失败
-go test ./... -count=1 -v | grep -- '--- SKIP'   # 只有需要真实依赖的测试（11 条，见下文）
+go test ./... -count=1 -v | grep -- '--- SKIP'   # 只有需要真实依赖的测试（14 条，见下文）
 make check-version dag-check contract-check import-scan module-check   # 每个打印一行 ✓
 make docs-check              # "0 with errors, 0 warnings"
 # 迁移，以登录角色运行：
@@ -57,11 +57,11 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw
   PG_PASSWORD="$ERP_SALES_DB_PASSWORD" PG_SCHEMA=erp_sales make migrate-idempotent   # ✓ 迁移幂等
 ```
 
-被跳过的测试（在 `backend/internal/tcc/confirm_test.go`、`backend/internal/tcc/opportunity_won_test.go`、`backend/internal/consumer/opportunity_won_dlq_test.go` 里）驱动真实的 `mdm/customer`、`mdm/product`、`erp/inventory` 与 `infra/workflow` 容器：真的库存不足、真的超时。在项目根用 `make test-cross ID=erp/sales` 跑，它会注入依赖地址。`buf generate` 之后（契约变了），契约包要打新 tag：见易错点。真机在项目根跑 `make verify ID=erp/sales ROUTE=/erp/sales/orders FOCUS=1`：构建镜像、连同依赖起本组件、核对迁移 / 健康 / 权限判定、跑一次 focus、收尾。
+被跳过的测试（在 `backend/internal/tcc/confirm_test.go`、`backend/internal/tcc/opportunity_won_test.go`、`backend/internal/tcc/snapshot_refresh_test.go`、`backend/internal/consumer/opportunity_won_dlq_test.go` 里）驱动真实的 `mdm/customer`、`mdm/product`、`erp/inventory` 与 `infra/workflow` 容器：真的库存不足、真的超时。在项目根用 `make test-cross ID=erp/sales` 跑，它会注入依赖地址。`buf generate` 之后（契约变了），契约包要打新 tag：见易错点。真机在项目根跑 `make verify ID=erp/sales ROUTE=/erp/sales/orders FOCUS=1`：构建镜像、连同依赖起本组件、核对迁移 / 健康 / 权限判定、跑一次 focus、收尾。
 
 ## 设计取舍
 
-- **确认是一条 TCC 链**，本地校验在前：客户、产品、信用额度（本地副本，在任何预留之前），然后 `Reserve`，然后在同一个事务里本地确认并写事件；只有 `Reserve` 之后的失败才需要补偿。
+- **确认是一条 TCC 链**，本地校验在前：客户、产品、信用额度（本地副本，先用刚做的客户 `BatchGet` 刷新，在任何预留之前），然后 `Reserve`，然后在同一个事务里本地确认并写事件；只有 `Reserve` 之后的失败才需要补偿。
 - **`Reserve` 超时绝不用 `CancelReservation` 回应**：先问预留状态（`GetReservationStatus`）；还是不知道 → 写一行 `sales_order_reconciliation_queue`，给调用方回 `503`。
 - **补偿原地重试三次**，同一个幂等键、不跟着调用方取消；第三次失败挂起订单并开异常待办。
 - **库存不足整单失败**；没有部分预留。
@@ -77,6 +77,7 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw
 |---|---|---|
 | `Reserve` 超时后直接调 `CancelReservation` | 已经预留成功的库存被释放而订单照走，或失败的预留被当成功；数字悄悄漂移，没有报错 | 没收到响应不代表请求没被处理；`resolveAfterTimeout` 先查 |
 | 在 `Reserve` 之后才校验信用额度 | 明显超额度的单先占住库存，再被拒、再补偿 | 本地校验不花钱，排在任何预留之前 |
+| 只凭事件维护的副本判信用额度 | 装进一个已经有客户的项目后，每次确认都答 `400 … 超过额度 0`；本组件停机期间调低的额度永远看不到 | NATS 核心订阅从不重放；`checkCredit` 先用第①步 `BatchGet` 的结果按 `version` 刷新副本再读 |
 | 用户请求路径上用 `*System` 客户端，或事件 handler 里用普通客户端 | 请求路径：响应里悄悄多出用户不该看到的行。事件 handler：调用不带 token | `UserClient` 透传调用者；事件 handler 没有调用者（`make gates` 跑 `system-client-scan`） |
 | 赢单路径复用 `CreateOrder` / `ConfirmOrder` | 事件 handler 里 `besdk.ScopeOf` panic：没有 Claims | `createOrderForOpportunity` / `confirmOrderForOpportunity` 的归属取自事件 |
 | 让 `opportunityWonHandler` 返回 error，指望重投 | 这条赢单事件再也不会出现 | `besdk.Consume` 走 NATS 核心订阅：handler 报错只记日志，不重投 |
