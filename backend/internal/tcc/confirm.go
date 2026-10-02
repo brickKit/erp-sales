@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"time"
 
 	"github.com/brickKit/erp-sales/v2/backend/internal/decimal"
 	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
@@ -149,10 +150,23 @@ func (o *Orchestrator) resolveAfterTimeout(
 	}
 }
 
+// maxCompensationFailures 是补偿连续失败多少次之后挂起订单、开异常待办。
+// 与 repo.IncrementCompensationAttemptsTx 里转 SUSPENDED 的阈值相同。
+const maxCompensationFailures = 3
+
+// compensationBackoff 是两次补偿重试之间的等待（第 n 次失败后等 n 倍）。
+var compensationBackoff = 100 * time.Millisecond
+
 // compensateReserve 是 TCC 的补偿动作：⑤失败后释放④已经成功的预留。
-// 连续失败次数由 repo.IncrementCompensationAttemptsTx 累加，3 次后自动
-// 转 SUSPENDED（设计计划 §3.1、§4.4.4）——阶段二只标状态+打日志，绝不
-// 无限重试。
+//
+// 补偿失败就原地重试（同一个幂等键，CancelReservation 是幂等的），每次
+// 失败都记进 compensation_attempts；连续失败 3 次时 repo 把订单转
+// SUSPENDED，这里再开一条异常待办交给人，绝不无限重试。补偿成功就把计数
+// 清零——计数只表示"连续"失败。
+//
+// ⚠️ 补偿不跟着用户请求一起放弃：调用方的 ctx 可能已经因为客户端断开而
+// 取消，但已经成功的预留必须释放，所以这里用去掉取消信号的 ctx，每次
+// 远程调用各自限时。
 func (o *Orchestrator) compensateReserve(
 	ctx context.Context, invConn inventoryv1.InventoryServiceClient,
 	orderID, idempotencyKey, reservationID string, logger *slog.Logger,
@@ -162,27 +176,38 @@ func (o *Orchestrator) compensateReserve(
 		// ——不需要补偿，直接返回（对账队列/客户端重试自己会处理）。
 		return
 	}
-	_, err := invConn.CancelReservation(ctx, &inventoryv1.CancelReservationRequest{
-		IdempotencyKey: idempotencyKey + ":compensate-cancel", ReservationId: reservationID,
-	})
-	attempts, incErr := o.Repo.IncrementCompensationAttempts(ctx, orderID)
-	if err != nil {
+	ctx = context.WithoutCancel(ctx)
+	failures := 0
+	for {
+		callCtx, cancel := context.WithTimeout(ctx, o.ReserveTimeout)
+		_, err := invConn.CancelReservation(callCtx, &inventoryv1.CancelReservationRequest{
+			IdempotencyKey: idempotencyKey + ":compensate-cancel", ReservationId: reservationID,
+		})
+		cancel()
+		if err == nil {
+			logger.Info("补偿成功：已释放预留", "order_id", orderID, "reservation_id", reservationID, "failures", failures)
+			if failures > 0 {
+				if rerr := o.Repo.ResetCompensationAttempts(ctx, orderID); rerr != nil {
+					logger.Error("补偿失败计数清零出错", "order_id", orderID, "error", rerr)
+				}
+			}
+			return
+		}
+		failures++
+		attempts, incErr := o.Repo.IncrementCompensationAttempts(ctx, orderID)
 		logger.Error("补偿失败：CancelReservation 出错", "order_id", orderID, "reservation_id", reservationID,
 			"attempts", attempts, "error", err)
-	} else {
-		logger.Info("补偿成功：已释放预留", "order_id", orderID, "reservation_id", reservationID)
-	}
-	if incErr != nil {
-		logger.Error("累加补偿失败计数出错", "order_id", orderID, "error", incErr)
-		return
-	}
-	// ⚠️ attempts 达到 3 之后 SuspendOrderTx 已经在 IncrementCompensationAttempts
-	// 内部把订单转 SUSPENDED——一旦 SUSPENDED，ConfirmOrder 顶部的
-	// status != DRAFT 校验会直接拒绝任何后续调用，compensateReserve 不
-	// 可能在同一次"挂起"里被再次触发，idempotencyKey 派生的 CreateTask
-	// 幂等键因此天然只会用一次，不需要额外的去重状态（设计计划 §4.4.4）。
-	if attempts >= 3 {
-		o.maybeCreateExceptionTask(ctx, orderID, idempotencyKey, logger)
+		if incErr != nil {
+			logger.Error("累加补偿失败计数出错，停止重试", "order_id", orderID, "error", incErr)
+			return
+		}
+		if attempts >= maxCompensationFailures {
+			// 订单此时已是 SUSPENDED：ConfirmOrder 顶部的 status != DRAFT 校验
+			// 会拒绝任何后续确认，这条待办的幂等键在同一次挂起里只会用一次。
+			o.maybeCreateExceptionTask(ctx, orderID, idempotencyKey, logger)
+			return
+		}
+		time.Sleep(time.Duration(failures) * compensationBackoff)
 	}
 }
 

@@ -423,6 +423,22 @@ func (r *Repo) GetCustomerSnapshot(ctx context.Context, customerID string) (cred
 	return creditLimit, creditExposure, err
 }
 
+// ResetCompensationAttempts 把补偿失败计数清零：补偿最终成功之后调用，
+// 让计数始终是"连续"失败的次数。已经 SUSPENDED 的订单不动（挂起后的
+// 恢复只走 ResumeFromExceptionTx）。
+func (r *Repo) ResetCompensationAttempts(ctx context.Context, orderID string) error {
+	id, err := parseID("order_id", orderID)
+	if err != nil {
+		return err
+	}
+	return besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE sales_orders SET compensation_attempts = 0, updated_at = now()
+			WHERE id = $1 AND status <> $2 AND compensation_attempts <> 0`, id, StatusSuspended)
+		return err
+	})
+}
+
 // IncrementCompensationAttempts 包一层 WithTx，供 tcc 包在补偿失败时调用
 // （IncrementCompensationAttemptsTx 本身接 tx，是给未来可能的事件消费路径
 // 复用的，同 suspend.go 其余函数的判据）。
