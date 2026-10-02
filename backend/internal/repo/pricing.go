@@ -7,9 +7,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strconv"
+	"math/big"
 
 	besdk "github.com/brickKit/be-sdk-go"
+
+	"github.com/brickKit/erp-sales/v2/backend/internal/decimal"
 )
 
 // PriceInput 是定价的入参——本组件不 join mdm-product，categoryID 由
@@ -33,8 +35,7 @@ type PriceResult struct {
 // desc, id desc) 排序，第一条命中的赢（设计计划 §3.2）。数量必须达到
 // min_quantity 才命中；生效日期区间用 CURRENT_DATE 过滤。
 func findPriceTx(ctx context.Context, tx *sql.Tx, in PriceInput) (*PriceResult, error) {
-	qty, err := strconv.ParseFloat(in.Qty, 64)
-	if err != nil {
+	if _, err := decimal.Parse(in.Qty); err != nil {
 		return nil, fmt.Errorf("%w: qty 不是合法数字：%q", ErrInvalidArgument, in.Qty)
 	}
 
@@ -42,7 +43,7 @@ func findPriceTx(ctx context.Context, tx *sql.Tx, in PriceInput) (*PriceResult, 
 		SELECT unit_price, discount, tax_rate
 		FROM pricelist_items
 		WHERE status = 'ACTIVE'
-		  AND min_quantity <= $1
+		  AND min_quantity <= $1::numeric
 		  AND (date_start IS NULL OR date_start <= CURRENT_DATE)
 		  AND (date_end   IS NULL OR date_end   >= CURRENT_DATE)
 		  AND (
@@ -55,7 +56,7 @@ func findPriceTx(ctx context.Context, tx *sql.Tx, in PriceInput) (*PriceResult, 
 		  min_quantity DESC,
 		  id DESC
 		LIMIT 1`,
-		qty, in.ProductID, in.CategoryID)
+		in.Qty, in.ProductID, in.CategoryID)
 
 	var unitPrice, discount, taxRate string
 	if err := row.Scan(&unitPrice, &discount, &taxRate); err != nil {
@@ -72,29 +73,30 @@ func findPriceTx(ctx context.Context, tx *sql.Tx, in PriceInput) (*PriceResult, 
 	return &PriceResult{ProductID: in.ProductID, UnitPrice: unitPrice, Discount: discount, TaxRate: taxRate, Subtotal: subtotal}, nil
 }
 
-// computeSubtotal = qty * unit_price * (1 - discount)，服务端算好直接
-// 给，不让调用方自己算（同 §3.2 的"前端严禁自己算钱"判据）。
+// computeSubtotal = qty * unit_price * (1 - discount)，十进制精确计算，
+// 最后四舍五入到分。服务端算好直接给，不让调用方自己算钱。
 func computeSubtotal(qty, unitPrice, discount string) (string, error) {
-	q, err := strconv.ParseFloat(qty, 64)
+	q, err := decimal.Parse(qty)
 	if err != nil {
 		return "", fmt.Errorf("%w: qty 不是合法数字：%q", ErrInvalidArgument, qty)
 	}
-	p, err := strconv.ParseFloat(unitPrice, 64)
+	p, err := decimal.Parse(unitPrice)
 	if err != nil {
 		return "", fmt.Errorf("解析 unit_price: %w", err)
 	}
-	d, err := strconv.ParseFloat(discount, 64)
+	d, err := decimal.Parse(discount)
 	if err != nil {
 		return "", fmt.Errorf("解析 discount: %w", err)
 	}
-	return strconv.FormatFloat(q*p*(1-d), 'f', 2, 64), nil
+	rest := new(big.Rat).Sub(big.NewRat(1, 1), d)
+	return decimal.Format2(new(big.Rat).Mul(new(big.Rat).Mul(q, p), rest)), nil
 }
 
 // CalculatePriceDryRun 是纯函数、不落库的试算接口——前端/BFF 严禁自己
 // 算钱（设计计划 §3.2、§8.4）。
 func (r *Repo) CalculatePriceDryRun(ctx context.Context, items []PriceInput) ([]*PriceResult, string, error) {
 	var results []*PriceResult
-	var total float64
+	total := new(big.Rat)
 	err := besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
 		for _, in := range items {
 			res, err := findPriceTx(ctx, tx, in)
@@ -102,16 +104,16 @@ func (r *Repo) CalculatePriceDryRun(ctx context.Context, items []PriceInput) ([]
 				return err
 			}
 			results = append(results, res)
-			subtotal, err := strconv.ParseFloat(res.Subtotal, 64)
+			subtotal, err := decimal.Parse(res.Subtotal)
 			if err != nil {
 				return err
 			}
-			total += subtotal
+			total.Add(total, subtotal)
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, "", err
 	}
-	return results, strconv.FormatFloat(total, 'f', 2, 64), nil
+	return results, decimal.Format2(total), nil
 }

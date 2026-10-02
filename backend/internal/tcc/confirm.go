@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strconv"
+	"math/big"
 
+	"github.com/brickKit/erp-sales/v2/backend/internal/decimal"
 	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
 
 	inventoryv1 "github.com/brickKit/erp-inventory/gen/erp/inventory/v1"
@@ -236,11 +237,10 @@ func (o *Orchestrator) maybeCreateExceptionTask(ctx context.Context, orderID, id
 	logger.Info("已建异常待办", "order_id", orderID)
 }
 
-// exceedsCreditLimit 判断"已用额度 + 本单金额"是否超过"额度"。三个都是
-// decimal-as-string（§附录：金额字段一律 string 传 decimal）。
+// exceedsCreditLimit 判断"已用额度 + 本单金额"是否超过"额度"，十进制
+// 精确比较。解析不了的值当作 0：本地查不到客户快照时额度就是 0，任何
+// 正金额的订单都会被拒，要等 mdm.customer.* 事件把额度带过来。
 func exceedsCreditLimit(exposure, orderAmount, limit string) bool {
-	e, _ := strconv.ParseFloat(exposure, 64)
-	a, _ := strconv.ParseFloat(orderAmount, 64)
-	l, _ := strconv.ParseFloat(limit, 64)
-	return e+a > l
+	used := new(big.Rat).Add(decimal.ParseOrZero(exposure), decimal.ParseOrZero(orderAmount))
+	return used.Cmp(decimal.ParseOrZero(limit)) > 0
 }

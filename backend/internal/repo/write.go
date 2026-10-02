@@ -9,10 +9,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"strconv"
 	"time"
 
 	besdk "github.com/brickKit/be-sdk-go"
+
+	"github.com/brickKit/erp-sales/v2/backend/internal/decimal"
 )
 
 // ── CreateOrder：建 DRAFT，不预留库存（设计计划 §3）。跨组件校验
@@ -45,15 +48,15 @@ type CreateOrderInput struct {
 }
 
 func sumSubtotals(items []CreateOrderItemInput) (string, error) {
-	var total float64
+	total := new(big.Rat)
 	for _, it := range items {
-		v, err := strconv.ParseFloat(it.Subtotal, 64)
+		v, err := decimal.Parse(it.Subtotal)
 		if err != nil {
 			return "", fmt.Errorf("%w: subtotal 不是合法数字：%q", ErrInvalidArgument, it.Subtotal)
 		}
-		total += v
+		total.Add(total, v)
 	}
-	return strconv.FormatFloat(total, 'f', 2, 64), nil
+	return decimal.Format2(total), nil
 }
 
 func (r *Repo) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order, error) {
