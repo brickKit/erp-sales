@@ -40,7 +40,7 @@ type Orchestrator struct {
 	Repo               *repo.Repo
 	Clients            *client.Clients // 拨号依赖组件（地址来自 rt.Config）
 	DefaultWarehouseID string          // 设计计划 §9 第 9 条：阶段二没有多仓选货逻辑
-	ReserveTimeout     time.Duration   // Reserve/GetReservationStatus 各自的超时（§4.5 的"掐短"）
+	CallTimeout        time.Duration   // 每一次同步调用依赖组件各自的超时
 	// ExceptionAssigneeSub 是补偿连续失败时建的 exception 待办分配给谁——
 	// 本阶段没有 mdm-org，用最简单的配置项形式过（阶段三 Task 8 明文
 	// 要求，不要提前实现组织树路由，设计计划 §4.4.4）。留空表示这项
@@ -49,9 +49,9 @@ type Orchestrator struct {
 	ExceptionAssigneeSub string
 }
 
-func New(r *repo.Repo, clients *client.Clients, defaultWarehouseID string, reserveTimeout time.Duration, exceptionAssigneeSub string) *Orchestrator {
+func New(r *repo.Repo, clients *client.Clients, defaultWarehouseID string, callTimeout time.Duration, exceptionAssigneeSub string) *Orchestrator {
 	return &Orchestrator{
-		Repo: r, Clients: clients, DefaultWarehouseID: defaultWarehouseID, ReserveTimeout: reserveTimeout,
+		Repo: r, Clients: clients, DefaultWarehouseID: defaultWarehouseID, CallTimeout: callTimeout,
 		ExceptionAssigneeSub: exceptionAssigneeSub,
 	}
 }
@@ -87,7 +87,9 @@ func (o *Orchestrator) fetchActiveCustomer(ctx context.Context, customerID strin
 	}
 	defer closeConn()
 
-	resp, err := conn.BatchGet(ctx, &customerv1.BatchGetRequest{Ids: []string{customerID}})
+	callCtx, cancel := context.WithTimeout(ctx, o.CallTimeout)
+	defer cancel()
+	resp, err := conn.BatchGet(callCtx, &customerv1.BatchGetRequest{Ids: []string{customerID}})
 	if err != nil {
 		return nil, fmt.Errorf("校验客户失败: %w", err)
 	}
@@ -108,7 +110,9 @@ func (o *Orchestrator) fetchActiveProducts(ctx context.Context, productIDs []str
 	}
 	defer closeConn()
 
-	resp, err := conn.BatchGet(ctx, &productv1.BatchGetRequest{Ids: productIDs})
+	callCtx, cancel := context.WithTimeout(ctx, o.CallTimeout)
+	defer cancel()
+	resp, err := conn.BatchGet(callCtx, &productv1.BatchGetRequest{Ids: productIDs})
 	if err != nil {
 		return nil, fmt.Errorf("校验产品失败: %w", err)
 	}

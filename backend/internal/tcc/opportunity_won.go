@@ -82,7 +82,9 @@ func (o *Orchestrator) fetchActiveCustomerSystem(ctx context.Context, customerID
 	}
 	defer closeConn()
 
-	resp, err := conn.BatchGet(ctx, &customerv1.BatchGetRequest{Ids: []string{customerID}})
+	callCtx, cancel := context.WithTimeout(ctx, o.CallTimeout)
+	defer cancel()
+	resp, err := conn.BatchGet(callCtx, &customerv1.BatchGetRequest{Ids: []string{customerID}})
 	if err != nil {
 		return nil, fmt.Errorf("校验客户失败: %w", err)
 	}
@@ -103,7 +105,9 @@ func (o *Orchestrator) fetchActiveProductsSystem(ctx context.Context, productIDs
 	}
 	defer closeConn()
 
-	resp, err := conn.BatchGet(ctx, &productv1.BatchGetRequest{Ids: productIDs})
+	callCtx, cancel := context.WithTimeout(ctx, o.CallTimeout)
+	defer cancel()
+	resp, err := conn.BatchGet(callCtx, &productv1.BatchGetRequest{Ids: productIDs})
 	if err != nil {
 		return nil, fmt.Errorf("校验产品失败: %w", err)
 	}
@@ -256,7 +260,9 @@ func (o *Orchestrator) createOpportunityExceptionTask(ctx context.Context, p Opp
 		logger.Error("序列化异常待办摘要失败", "opportunity_id", p.OpportunityID, "error", err)
 		return
 	}
-	_, err = wfConn.CreateTask(ctx, &workflowv1.CreateTaskRequest{
+	callCtx, cancel := context.WithTimeout(ctx, o.CallTimeout)
+	defer cancel()
+	_, err = wfConn.CreateTask(callCtx, &workflowv1.CreateTaskRequest{
 		IdempotencyKey:   "crm-won:" + p.OpportunityID + ":exception-task",
 		Type:             workflowv1.TaskType_TASK_TYPE_EXCEPTION,
 		AssigneeSub:      p.OwnerID,

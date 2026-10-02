@@ -93,7 +93,7 @@ func (o *Orchestrator) reserve(
 	ctx context.Context, invConn inventoryv1.InventoryServiceClient,
 	orderID, idempotencyKey string, items []repo.OrderItem, logger *slog.Logger,
 ) (string, error) {
-	reserveCtx, cancel := context.WithTimeout(ctx, o.ReserveTimeout)
+	reserveCtx, cancel := context.WithTimeout(ctx, o.CallTimeout)
 	defer cancel()
 
 	idemKey := reserveIdemKey(idempotencyKey)
@@ -118,7 +118,7 @@ func (o *Orchestrator) reserve(
 func (o *Orchestrator) resolveAfterTimeout(
 	ctx context.Context, invConn inventoryv1.InventoryServiceClient, orderID, idemKey string, logger *slog.Logger,
 ) (string, error) {
-	statusCtx, cancel := context.WithTimeout(ctx, o.ReserveTimeout)
+	statusCtx, cancel := context.WithTimeout(ctx, o.CallTimeout)
 	defer cancel()
 
 	resp, err := invConn.GetReservationStatus(statusCtx, &inventoryv1.GetReservationStatusRequest{IdempotencyKey: idemKey})
@@ -179,7 +179,7 @@ func (o *Orchestrator) compensateReserve(
 	ctx = context.WithoutCancel(ctx)
 	failures := 0
 	for {
-		callCtx, cancel := context.WithTimeout(ctx, o.ReserveTimeout)
+		callCtx, cancel := context.WithTimeout(ctx, o.CallTimeout)
 		_, err := invConn.CancelReservation(callCtx, &inventoryv1.CancelReservationRequest{
 			IdempotencyKey: idempotencyKey + ":compensate-cancel", ReservationId: reservationID,
 		})
@@ -238,7 +238,9 @@ func (o *Orchestrator) maybeCreateExceptionTask(ctx context.Context, orderID, id
 		logger.Error("序列化异常待办摘要失败", "order_id", orderID, "error", err)
 		return
 	}
-	_, err = wfConn.CreateTask(ctx, &workflowv1.CreateTaskRequest{
+	callCtx, cancel := context.WithTimeout(ctx, o.CallTimeout)
+	defer cancel()
+	_, err = wfConn.CreateTask(callCtx, &workflowv1.CreateTaskRequest{
 		// 派生自本次 ConfirmOrder 命令自己的 idempotency_key——同一个确认
 		// 命令重放（网络重试）应该拿到同一条待办；订单从 SUSPENDED 恢复
 		// 后如果再次补偿失败 3 次，调用方会带一个全新的 idempotency_key

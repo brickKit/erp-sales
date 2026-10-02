@@ -22,11 +22,11 @@ import (
 	"github.com/brickKit/erp-sales/v2/backend/internal/tcc"
 )
 
-// reserveTimeout 是 ConfirmOrder 的 TCC 链里 Reserve/GetReservationStatus
-// 各自的超时（§4.5"掐短"判据）。阶段二没有把它做成配置项——四条依赖边
-// 都在同一个 docker 网络里，几秒钟的超时足够覆盖真实的网络抖动而不会让
-// 用户等太久；需要按部署环境调整时再回来补 configSchema。
-const reserveTimeout = 5 * time.Second
+// callTimeout 是每一次同步调用依赖组件的超时（BatchGet、Reserve、
+// GetReservationStatus、CancelReservation、ConfirmIssue、CreateTask）。
+// 不做成配置项：依赖都在同一张网络里，几秒足够覆盖网络抖动，又不会让
+// 用户等太久。
+const callTimeout = 5 * time.Second
 
 // New 构造 erp-sales 模块。签名一个字都不许改（§12.5.1）。
 func New(ctx context.Context, rt *besdk.Runtime) (*besdk.Module, error) {
@@ -44,7 +44,7 @@ func New(ctx context.Context, rt *besdk.Runtime) (*besdk.Module, error) {
 	exceptionAssigneeSub := rt.Config.StringOr("EXCEPTION_ASSIGNEE_SUB", "")
 
 	r := repo.New(rt.DB, role, schema)
-	orch := tcc.New(r, client.New(rt.Config), defaultWarehouseID, reserveTimeout, exceptionAssigneeSub)
+	orch := tcc.New(r, client.New(rt.Config), defaultWarehouseID, callTimeout, exceptionAssigneeSub)
 	svc := service.New(r, orch, rt.Logger)
 
 	// HTTP：engine 必须用 besdk.NewGinEngine，它已挂好 OTel / request-id /

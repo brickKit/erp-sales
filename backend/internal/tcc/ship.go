@@ -29,7 +29,11 @@ func (o *Orchestrator) ShipOrder(ctx context.Context, orderID, idempotencyKey st
 	}
 	defer closeConn()
 
-	_, err = conn.ConfirmIssue(ctx, &inventoryv1.ConfirmIssueRequest{
+	// 超时只报错、不补偿：没有需要撤销的本地写，调用方带同一个幂等键重试，
+	// ConfirmIssue 按幂等键返回同一结果。
+	callCtx, cancel := context.WithTimeout(ctx, o.CallTimeout)
+	defer cancel()
+	_, err = conn.ConfirmIssue(callCtx, &inventoryv1.ConfirmIssueRequest{
 		IdempotencyKey: idempotencyKey + ":confirm-issue", ReservationId: order.ReservationID,
 	})
 	if err != nil {

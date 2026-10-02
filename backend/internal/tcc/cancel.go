@@ -46,7 +46,10 @@ func (o *Orchestrator) cancelReservation(ctx context.Context, reservationID, ide
 	}
 	defer closeConn()
 
-	_, err = conn.CancelReservation(ctx, &inventoryv1.CancelReservationRequest{
+	// 超时只报错：订单仍是 CONFIRMED，调用方带同一个幂等键重试即可。
+	callCtx, cancel := context.WithTimeout(ctx, o.CallTimeout)
+	defer cancel()
+	_, err = conn.CancelReservation(callCtx, &inventoryv1.CancelReservationRequest{
 		IdempotencyKey: idempotencyKey + ":cancel-reservation", ReservationId: reservationID,
 	})
 	if err != nil {
