@@ -29,7 +29,7 @@ This component owns the sales order from quotation to shipment: the order and it
 | `pricelists`, `pricelist_items` | no | ordered rules: `applied_on` `PRODUCT` / `CATEGORY` / `GLOBAL`, `min_quantity`, validity dates, unit price, discount, `price_limit`, tax rate |
 | `customer_snapshots` | no | `credit_limit` (from `mdm.customer.*`, refreshed at confirmation), `credit_exposure` (nothing maintains it yet: see Open questions), `version` |
 | `sales_order_reconciliation_queue` | no | a row per confirmation whose reservation state stayed unknown |
-| `command_idempotency` | no | claim-first idempotency of the four commands |
+| `command_idempotency` | no | claim-first idempotency of the four commands: the key, the command that used it, the resulting order |
 | `event_outbox`, `event_inbox` | weekly, by `created_at` | outbox for the pump; inbox for consumer deduplication |
 
 `order_no` is `SO` + the ID: unique, gaps allowed (an insert that rolls back still consumes the sequence). A sales number with gaps is not an audit problem; that applies to an accounting posting number, not here. Order lines are full snapshots: a product renamed later must not rewrite past orders, and the product data lives in another process where no join is possible anyway.
@@ -52,6 +52,8 @@ gRPC `erp.sales.v1.SalesService`:
 | `GetOrderStatus` | read | for a caller whose command timed out; `UNSPECIFIED` = no such order |
 
 REST under `/erp/sales`, every route behind a key from `assembly.yaml`: `GET /orders`, `GET /orders/{id}`, `GET /stats/summary` (`erp.sales.view`); `POST /orders`, `POST /price/dry-run` (`erp.sales.create`: the dry run is part of preparing an order, not a separate right); `POST /orders/{id}/confirm`, `/cancel`, `/ship` (`erp.sales.confirm`, `.cancel`, `.ship`). `BatchGetOrder` and `GetOrderStatus` are not on REST: they are component protocols. The dry run must be on REST: the order entry page prices as the user types, and front ends never compute money.
+
+**Idempotency.** Every command looks its key up in `command_idempotency` before anything else, before the state check and before any call to a dependency: a key that already succeeded returns that first result unchanged. The order matters. After a successful confirmation the order is `CONFIRMED`; a state check first would answer every replay "not a draft", so a caller whose response was lost would be told the confirmation failed, and a won opportunity seen twice would open a false exception task. A replay of a create does not validate the customer and products again either: a customer disabled since then must not make the replay fail. A key belongs to one command and one order, the same rule as `infra/workflow`: a key already used by another command, or for another order, is `400`. Short-circuiting it would answer a ship with the confirmation's result, after the stock was already issued. A create key whose order is outside the caller's scope is `400` too, so a guessed key never hands over someone else's order. The claim in the final transaction stays: it settles two concurrent requests with one key, and the loser follows the same rules.
 
 **The confirmation chain** (`ConfirmOrder`, also used by the won-opportunity path):
 

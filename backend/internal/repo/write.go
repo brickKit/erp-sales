@@ -82,16 +82,12 @@ func (r *Repo) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order, er
 
 	var order *Order
 	err = besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
-		claimed, err := claimIdempotency(ctx, tx, in.IdempotencyKey, "erp.sales.create")
+		claimed, err := claimIdempotency(ctx, tx, in.IdempotencyKey, CommandCreate)
 		if err != nil {
 			return err
 		}
 		if !claimed {
-			resultID, err := lookupIdempotencyResult(ctx, tx, in.IdempotencyKey)
-			if err != nil {
-				return err
-			}
-			order, err = getOrderTx(ctx, tx, resultID)
+			order, err = replayClaimLost(ctx, tx, in.IdempotencyKey, CommandCreate, "")
 			return err
 		}
 
@@ -162,16 +158,12 @@ func (r *Repo) FinalizeConfirm(ctx context.Context, in FinalizeConfirmInput) (*O
 
 	var order *Order
 	err = besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
-		claimed, err := claimIdempotency(ctx, tx, in.IdempotencyKey, "erp.sales.confirm")
+		claimed, err := claimIdempotency(ctx, tx, in.IdempotencyKey, CommandConfirm)
 		if err != nil {
 			return err
 		}
 		if !claimed {
-			resultID, err := lookupIdempotencyResult(ctx, tx, in.IdempotencyKey)
-			if err != nil {
-				return err
-			}
-			order, err = getOrderTx(ctx, tx, resultID)
+			order, err = replayClaimLost(ctx, tx, in.IdempotencyKey, CommandConfirm, in.OrderID)
 			return err
 		}
 
@@ -255,16 +247,12 @@ func (r *Repo) FinalizeCancel(ctx context.Context, in FinalizeCancelInput) (*Ord
 
 	var order *Order
 	err = besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
-		claimed, err := claimIdempotency(ctx, tx, in.IdempotencyKey, "erp.sales.cancel")
+		claimed, err := claimIdempotency(ctx, tx, in.IdempotencyKey, CommandCancel)
 		if err != nil {
 			return err
 		}
 		if !claimed {
-			resultID, err := lookupIdempotencyResult(ctx, tx, in.IdempotencyKey)
-			if err != nil {
-				return err
-			}
-			order, err = getOrderTx(ctx, tx, resultID)
+			order, err = replayClaimLost(ctx, tx, in.IdempotencyKey, CommandCancel, in.OrderID)
 			return err
 		}
 
@@ -340,16 +328,12 @@ func (r *Repo) FinalizeShip(ctx context.Context, in FinalizeShipInput) (*Order, 
 
 	var order *Order
 	err = besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
-		claimed, err := claimIdempotency(ctx, tx, in.IdempotencyKey, "erp.sales.ship")
+		claimed, err := claimIdempotency(ctx, tx, in.IdempotencyKey, CommandShip)
 		if err != nil {
 			return err
 		}
 		if !claimed {
-			resultID, err := lookupIdempotencyResult(ctx, tx, in.IdempotencyKey)
-			if err != nil {
-				return err
-			}
-			order, err = getOrderTx(ctx, tx, resultID)
+			order, err = replayClaimLost(ctx, tx, in.IdempotencyKey, CommandShip, in.OrderID)
 			return err
 		}
 

@@ -33,6 +33,11 @@ func reserveIdemKey(idempotencyKey string) string { return idempotencyKey + ":re
 //	④ Reserve 库存             失败 → 直接返回；超时 → 见 resolveAfterTimeout
 //	⑤ 落库 + 发事件（同一事务） 失败 → 补偿：CancelReservation
 func (o *Orchestrator) ConfirmOrder(ctx context.Context, orderID, idempotencyKey string, logger *slog.Logger) (*repo.Order, error) {
+	// 幂等键先于一切：这个键已经成功确认过这张单，原样返回第一次的结果——
+	// 第一次之后订单已是 CONFIRMED，先判状态的话重放永远答"不是草稿"。
+	if replayed, err := o.Repo.ReplayCommand(ctx, idempotencyKey, repo.CommandConfirm, orderID); err != nil || replayed != nil {
+		return replayed, err
+	}
 	order, err := o.Repo.GetOrder(ctx, orderID)
 	if err != nil {
 		return nil, err

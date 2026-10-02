@@ -15,6 +15,10 @@ import (
 // 不可取消（CANCELLED 是终态，不能复活，也意味着
 // SHIPPED/COMPLETED/CLOSED 之后不能反向取消）。
 func (o *Orchestrator) CancelOrder(ctx context.Context, orderID, idempotencyKey, reason string) (*repo.Order, error) {
+	// 幂等键先于状态校验（见 ConfirmOrder）；这里还挡住"拿确认用过的键来取消"。
+	if replayed, err := o.Repo.ReplayCommand(ctx, idempotencyKey, repo.CommandCancel, orderID); err != nil || replayed != nil {
+		return replayed, err
+	}
 	order, err := o.Repo.GetOrder(ctx, orderID)
 	if err != nil {
 		return nil, err

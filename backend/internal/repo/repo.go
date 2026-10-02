@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	besdk "github.com/brickKit/be-sdk-go"
 )
 
 // ── 哨兵错误。grpc / http 两层通过 service.ToStatus 统一映射成状态码 ──
@@ -112,13 +114,71 @@ func finalizeIdempotency(ctx context.Context, tx *sql.Tx, key, resultID string) 
 	return nil
 }
 
-func lookupIdempotencyResult(ctx context.Context, tx *sql.Tx, key string) (string, error) {
-	var resultID string
-	if err := tx.QueryRowContext(ctx,
-		`SELECT result_id FROM command_idempotency WHERE idempotency_key = $1`, key).Scan(&resultID); err != nil {
-		return "", fmt.Errorf("查 command_idempotency: %w", err)
+// 四个写命令在 command_idempotency 里登记的命令名。
+const (
+	CommandCreate  = "erp.sales.create"
+	CommandConfirm = "erp.sales.confirm"
+	CommandCancel  = "erp.sales.cancel"
+	CommandShip    = "erp.sales.ship"
+)
+
+// replayTx 取这个键上一次成功的结果（订单），没有用过返回 nil。
+//
+// 一个键只属于一次命令、一张订单（同 infra/workflow 的规则）：键被别的命令用过，
+// 或者（orderID 非空时）是另一张订单的结果，就报参数错误。照样短路的话，拿确认
+// 用过的键去发货会把确认的结果当成"已经发过货"返回，订单其实还是 CONFIRMED；拿
+// A 单的键去确认 B 单，会把 A 单当成 B 单的结果。建单没有 order_id，只比命令。
+//
+// result_id 为空的行只可能是另一个还没提交的事务刚声明的（声明与落地结果在同一
+// 个事务里），别的事务看不到它；当作没用过，交给之后的声明去等锁。
+func replayTx(ctx context.Context, tx *sql.Tx, key, command, orderID string) (*Order, error) {
+	var stored, resultID string
+	err := tx.QueryRowContext(ctx,
+		`SELECT command, result_id FROM command_idempotency WHERE idempotency_key = $1`, key).Scan(&stored, &resultID)
+	if err == sql.ErrNoRows {
+		return nil, nil
 	}
-	return resultID, nil
+	if err != nil {
+		return nil, fmt.Errorf("查 command_idempotency: %w", err)
+	}
+	if stored != command {
+		return nil, fmt.Errorf("%w: idempotency_key %q 已经被 %s 用过，不能再用于 %s", ErrInvalidArgument, key, stored, command)
+	}
+	if resultID == "" {
+		return nil, nil
+	}
+	if orderID != "" && resultID != orderID {
+		return nil, fmt.Errorf("%w: idempotency_key %q 已经用于订单 %s，不能再用于订单 %s", ErrInvalidArgument, key, resultID, orderID)
+	}
+	return getOrderTx(ctx, tx, resultID)
+}
+
+// replayClaimLost 是声明失败（并发的同一个键先提交了）时取结果的地方：规则同
+// replayTx；这时那一行一定已经提交、带着结果。
+func replayClaimLost(ctx context.Context, tx *sql.Tx, key, command, orderID string) (*Order, error) {
+	order, err := replayTx(ctx, tx, key, command, orderID)
+	if err == nil && order == nil {
+		return nil, fmt.Errorf("command_idempotency %q 声明失败却查不到结果", key)
+	}
+	return order, err
+}
+
+// ReplayCommand 在一个写命令做任何事之前查它的幂等键：这个键已经成功执行过同一
+// 命令（同一张订单），返回那次的结果，调用方原样返回、不判状态、不调依赖；没用过
+// 返回 nil。必须排在状态校验之前：第一次成功之后状态已经变了（确认之后是
+// CONFIRMED），先判状态的话重放永远答"状态不对"，契约承诺的"重放返回第一次的
+// 结果"就落空了。
+func (r *Repo) ReplayCommand(ctx context.Context, key, command, orderID string) (*Order, error) {
+	if key == "" {
+		return nil, fmt.Errorf("%w: idempotency_key 不能为空", ErrInvalidArgument)
+	}
+	var order *Order
+	err := besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
+		var e error
+		order, e = replayTx(ctx, tx, key, command, orderID)
+		return e
+	})
+	return order, err
 }
 
 func parseID(field, s string) (int64, error) {

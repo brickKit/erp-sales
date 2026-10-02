@@ -43,6 +43,21 @@ func (o *Orchestrator) CreateOrder(ctx context.Context, idempotencyKey, customer
 		return nil, fmt.Errorf("%w: items 不能为空", repo.ErrInvalidArgument)
 	}
 
+	// 幂等键先于远程校验：重放拿回第一次建出的单，不再校验客户 / 产品（第一次
+	// 之后客户可能已被停用，重放不该因此失败）。这张单不在调用者范围内说明键是
+	// 别人用过的：不交出别人的订单，按键冲突处理。
+	scope := besdk.ScopeOf(ctx)
+	replayed, err := o.Repo.ReplayCommand(ctx, idempotencyKey, repo.CommandCreate, "")
+	if err != nil {
+		return nil, err
+	}
+	if replayed != nil {
+		if !replayed.InScope(scope.Prefix, scope.Owner) {
+			return nil, fmt.Errorf("%w: idempotency_key %q 已经被别人用过", repo.ErrInvalidArgument, idempotencyKey)
+		}
+		return replayed, nil
+	}
+
 	customer, err := o.fetchActiveCustomer(ctx, customerID)
 	if err != nil {
 		return nil, err
@@ -83,7 +98,6 @@ func (o *Orchestrator) CreateOrder(ctx context.Context, idempotencyKey, customer
 	// dept_id/dept_path/owner_id 是创建时快照，取自调用者的 besdk.ScopeOf(ctx)。
 	// 没有部门的人（!HasDept）也能建单：dept_path / dept_id 留空串，这张单只对
 	// 他本人可见。Prefix 此时是 SDK 的哨兵，不能写进行里。
-	scope := besdk.ScopeOf(ctx)
 	deptPath := ""
 	if scope.HasDept {
 		deptPath = scope.Prefix

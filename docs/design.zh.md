@@ -29,7 +29,7 @@
 | `pricelists`、`pricelist_items` | 否 | 有序规则：`applied_on` 为 `PRODUCT` / `CATEGORY` / `GLOBAL`、`min_quantity`、生效日期、单价、折扣、`price_limit`、税率 |
 | `customer_snapshots` | 否 | `credit_limit`（来自 `mdm.customer.*`，确认时刷新）、`credit_exposure`（还没有任何东西维护它：见未决问题）、`version` |
 | `sales_order_reconciliation_queue` | 否 | 预留状态一直未知的每次确认一行 |
-| `command_idempotency` | 否 | 四个命令的先声明式幂等 |
+| `command_idempotency` | 否 | 四个命令的先声明式幂等：键、用过它的命令、得到的订单 |
 | `event_outbox`、`event_inbox` | 按 `created_at` 周分区 | 推送循环读的 Outbox；消费去重用的 Inbox |
 
 `order_no` 是 `SO` + ID：唯一，允许有缺口（插入回滚时序列号照样被消耗）。销售单号有缺口不是审计问题；那条要求属于会计过账号，不在这里。订单行是完整快照：产品后来改名不该改写历史订单，而且产品数据在另一个进程里，本来就无法 join。
@@ -52,6 +52,8 @@ gRPC `erp.sales.v1.SalesService`：
 | `GetOrderStatus` | 读 | 给命令超时的调用方；`UNSPECIFIED` = 没有这张单 |
 
 REST 前缀 `/erp/sales`，每条路由都带 `assembly.yaml` 里的键：`GET /orders`、`GET /orders/{id}`、`GET /stats/summary`（`erp.sales.view`）；`POST /orders`、`POST /price/dry-run`（`erp.sales.create`：试算是准备建单的一部分，不单开一个权限）；`POST /orders/{id}/confirm`、`/cancel`、`/ship`（`erp.sales.confirm`、`.cancel`、`.ship`）。`BatchGetOrder` 与 `GetOrderStatus` 不上 REST：它们是组件间协议。试算必须上 REST：下单页随输入实时定价，前端永远不自己算钱。
+
+**幂等。** 每个命令最先做的是到 `command_idempotency` 查自己的键，排在状态校验之前，也排在调用任何依赖之前：这个键已经成功过，就原样返回第一次的结果。顺序很要紧：确认成功之后订单已是 `CONFIRMED`，先判状态的话每次重放都答"不是草稿"，响应丢了的调用方会被告知确认失败，同一个赢单商机来两次会开一条假的异常待办。建单的重放也不再校验客户与产品：之后被停用的客户不该让重放失败。一个键只属于一次命令、一张订单，规则同 `infra/workflow`：键被别的命令用过、或用于别的订单，答 `400`。照样短路的话，发货会拿到确认的结果，而库存在那之前已经出了。建单的键对应的订单不在调用者范围内，同样答 `400`，猜中别人的键也拿不到别人的订单。最后那个事务里的声明仍然保留：它决定同一个键的两个并发请求谁先，后到的那个按同样的规则处理。
 
 **确认链**（`ConfirmOrder`，赢单路径也用它）：
 

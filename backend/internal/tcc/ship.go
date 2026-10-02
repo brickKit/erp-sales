@@ -12,6 +12,10 @@ import (
 // ShipOrder 预留转实际出库（调 erp-inventory.ConfirmIssue），只有
 // CONFIRMED 才能发货。
 func (o *Orchestrator) ShipOrder(ctx context.Context, orderID, idempotencyKey string) (*repo.Order, error) {
+	// 幂等键先于状态校验：第一次发货成功后订单已是 SHIPPED（见 ConfirmOrder）。
+	if replayed, err := o.Repo.ReplayCommand(ctx, idempotencyKey, repo.CommandShip, orderID); err != nil || replayed != nil {
+		return replayed, err
+	}
 	order, err := o.Repo.GetOrder(ctx, orderID)
 	if err != nil {
 		return nil, err

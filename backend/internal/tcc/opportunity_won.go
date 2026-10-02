@@ -69,6 +69,10 @@ func (o *Orchestrator) HandleOpportunityWon(ctx context.Context, p OpportunityWo
 	logger.Info("商机赢单自动建单确认成功", "opportunity_id", p.OpportunityID, "order_id", order.ID)
 }
 
+// wonCreateKey 是赢单建单的幂等键，从 opportunity_id 确定性派生：同一个商机只
+// 应该产生一张订单。
+func wonCreateKey(opportunityID string) string { return "crm-won:" + opportunityID }
+
 // fetchActiveCustomerSystem/fetchActiveProductsSystem 同 tcc.go 的
 // fetchActiveCustomer/fetchActiveProducts，唯一区别是用 client.*System
 // 系统身份拨号（见 client.go 的 dialSystem 注释）。
@@ -128,6 +132,10 @@ func (o *Orchestrator) createOrderForOpportunity(ctx context.Context, p Opportun
 	if len(p.Items) == 0 {
 		return nil, fmt.Errorf("%w: items 不能为空", repo.ErrInvalidArgument)
 	}
+	// 同一个商机再来一次（新的事件 id，inbox 去不了重）：拿回第一次建出的单。
+	if replayed, err := o.Repo.ReplayCommand(ctx, wonCreateKey(p.OpportunityID), repo.CommandCreate, ""); err != nil || replayed != nil {
+		return replayed, err
+	}
 
 	customer, err := o.fetchActiveCustomerSystem(ctx, p.CustomerID)
 	if err != nil {
@@ -173,7 +181,7 @@ func (o *Orchestrator) createOrderForOpportunity(ctx context.Context, p Opportun
 		// 幂等键必须从 opportunity_id 确定性派生——同一个商机的赢单事件
 		// 只应该产生一个 DRAFT 订单，重复消费（若未来事件总线支持重投）
 		// 必须落到同一条 command_idempotency 记录上。
-		IdempotencyKey: "crm-won:" + p.OpportunityID, CustomerID: p.CustomerID, CustomerName: customer.Name,
+		IdempotencyKey: wonCreateKey(p.OpportunityID), CustomerID: p.CustomerID, CustomerName: customer.Name,
 		Items: createItems, DeptID: leafDeptID(p.DeptPath), DeptPath: p.DeptPath, OwnerID: p.OwnerID,
 		SourceOpportunityID: p.OpportunityID,
 	})
@@ -183,6 +191,11 @@ func (o *Orchestrator) createOrderForOpportunity(ctx context.Context, p Opportun
 // Reserve 超时状态内省/补偿等真正微妙的逻辑完全复用 o.reserve/
 // o.compensateReserve——唯一区别同样是客户端走系统身份。
 func (o *Orchestrator) confirmOrderForOpportunity(ctx context.Context, orderID, idempotencyKey string, logger *slog.Logger) (*repo.Order, error) {
+	// 幂等键先于状态校验（见 ConfirmOrder）：同一商机再来一次时订单已是
+	// CONFIRMED，先判状态会给负责人开一条"转单失败"的假异常待办。
+	if replayed, err := o.Repo.ReplayCommand(ctx, idempotencyKey, repo.CommandConfirm, orderID); err != nil || replayed != nil {
+		return replayed, err
+	}
 	order, err := o.Repo.GetOrder(ctx, orderID)
 	if err != nil {
 		return nil, err
