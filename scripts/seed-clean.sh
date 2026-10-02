@@ -8,10 +8,33 @@ set -euo pipefail
 C_GRN=$'\033[32m'; C_OFF=$'\033[0m'
 ok() { echo "${C_GRN}✓${C_OFF} $*"; }
 
-psqlx() { docker exec -i be-postgres psql -U postgres -d brickkit_db -v ON_ERROR_STOP=1 "$@"; }
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$DIR/../../.." && pwd)"
 
-psqlx -q <<'SQL'
-SET search_path TO erp_sales;
+# 库与 schema 取自项目给本组件的配置（config/erp-sales.yaml，$var:NAME 从
+# config/vars.yaml 取），不在这里写死：项目换了 PG_SCHEMA / PG_DATABASE，
+# 撤销的也跟着是那一份。没配的键用 component.yaml 的默认值。
+cfg() { # key default
+	python3 - "$ROOT" "$1" "$2" <<'PY'
+import os, sys, yaml
+root, key, default = sys.argv[1:]
+def load(rel):
+    p = os.path.join(root, rel)
+    return (yaml.safe_load(open(p)) or {}) if os.path.exists(p) else {}
+v = str(load("config/erp-sales.yaml").get(key, default))
+if v.startswith("$var:"):
+    v = str(load("config/vars.yaml").get(v[len("$var:"):], ""))
+print(v)
+PY
+}
+SCHEMA="$(cfg PG_SCHEMA erp_sales)"
+DATABASE="$(cfg PG_DATABASE brickkit_db)"
+[[ "$SCHEMA" =~ ^[a-z][a-z0-9_]*$ ]] || { echo "✗ PG_SCHEMA \"$SCHEMA\" 不是合法的 schema 名" >&2; exit 1; }
+
+psqlx() { docker exec -i be-postgres psql -U postgres -d "$DATABASE" -v ON_ERROR_STOP=1 "$@"; }
+
+psqlx -q -v schema="$SCHEMA" <<'SQL'
+SET search_path TO :"schema";
 DO $$
 DECLARE
   oid text;
@@ -19,8 +42,8 @@ DECLARE
   k text;
 BEGIN
   -- 迁移还没在这个库里跑过（schema 是 db-init 建的空壳）：没有可撤销的种子，什么都不做。
-  IF to_regclass('erp_sales.command_idempotency') IS NULL THEN
-    RAISE NOTICE 'erp_sales 还没有表（迁移没跑过），没有种子订单要删';
+  IF to_regclass('command_idempotency') IS NULL THEN  -- 按上面的 search_path 解析
+    RAISE NOTICE 'schema % 还没有表（迁移没跑过），没有种子订单要删', current_setting('search_path');
     RETURN;
   END IF;
   FOREACH k IN ARRAY ARRAY[
