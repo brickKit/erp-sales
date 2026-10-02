@@ -12,14 +12,14 @@ import (
 	salesv1 "github.com/brickKit/erp-sales/gen/erp/sales/v1"
 	"google.golang.org/grpc"
 
-	"github.com/brickKit/erp-sales/backend/internal/consumer"
-	grpcapi "github.com/brickKit/erp-sales/backend/internal/grpc"
-	httpapi "github.com/brickKit/erp-sales/backend/internal/http"
-	"github.com/brickKit/erp-sales/backend/internal/partition"
-	"github.com/brickKit/erp-sales/backend/internal/repo"
-	"github.com/brickKit/erp-sales/backend/internal/service"
-	"github.com/brickKit/erp-sales/backend/internal/tcc"
-	"github.com/brickKit/erp-sales/migrations"
+	"github.com/brickKit/erp-sales/v2/backend/internal/client"
+	"github.com/brickKit/erp-sales/v2/backend/internal/consumer"
+	grpcapi "github.com/brickKit/erp-sales/v2/backend/internal/grpc"
+	httpapi "github.com/brickKit/erp-sales/v2/backend/internal/http"
+	"github.com/brickKit/erp-sales/v2/backend/internal/partition"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/service"
+	"github.com/brickKit/erp-sales/v2/backend/internal/tcc"
 )
 
 // reserveTimeout 是 ConfirmOrder 的 TCC 链里 Reserve/GetReservationStatus
@@ -31,20 +31,20 @@ const reserveTimeout = 5 * time.Second
 // New 构造 erp-sales 模块。签名一个字都不许改（§12.5.1）。
 func New(ctx context.Context, rt *besdk.Runtime) (*besdk.Module, error) {
 	// ⚠️ 配置只从 rt.Config 来，模块里零 os.Getenv（§12.5.3、决策 110）。
-	schema := rt.Config.StringOr("pgSchema", "erp_sales")
+	schema := rt.Config.StringOr("PG_SCHEMA", "erp_sales")
 	role := schema + "_rw"
 	// defaultWarehouseId 必填、无默认值（设计计划 §9 第 9 条）：阶段二
 	// 没有多仓选货逻辑，ConfirmOrder 统一用这一个仓库发起 Reserve，配置
 	// 缺失属于部署错误，不该带着空字符串跑起来（同 rt.Config.MustString
 	// 自己的既有判据）。
-	defaultWarehouseID := rt.Config.MustString("defaultWarehouseId")
+	defaultWarehouseID := rt.Config.MustString("DEFAULT_WAREHOUSE_ID")
 	// exceptionAssigneeSub 留空是合法状态（本阶段没有 mdm-org，见
 	// tcc.Orchestrator 的字段注释）——留空时 maybeCreateExceptionTask 只
 	// 打日志跳过，不阻断 ConfirmOrder 本身的补偿逻辑。
-	exceptionAssigneeSub := rt.Config.StringOr("exceptionAssigneeSub", "")
+	exceptionAssigneeSub := rt.Config.StringOr("EXCEPTION_ASSIGNEE_SUB", "")
 
 	r := repo.New(rt.DB, role, schema)
-	orch := tcc.New(r, defaultWarehouseID, reserveTimeout, exceptionAssigneeSub)
+	orch := tcc.New(r, client.New(rt.Config), defaultWarehouseID, reserveTimeout, exceptionAssigneeSub)
 	svc := service.New(r, orch, rt.Logger)
 
 	// HTTP：engine 必须用 besdk.NewGinEngine，它已挂好 OTel / request-id /
@@ -60,8 +60,6 @@ func New(ctx context.Context, rt *besdk.Runtime) (*besdk.Module, error) {
 		RegisterGRPC: func(gs *grpc.Server) {
 			salesv1.RegisterSalesServiceServer(gs, grpcapi.New(svc))
 		},
-
-		Migrations: migrations.FS, // 合并态由外壳按拓扑顺序跑（§13.3 铁律五）
 
 		// 后台循环：Outbox 推送 + 周分区维护（event_outbox/event_inbox）+
 		// 月分区维护（sales_orders/sales_order_items）+ 消费事件。四个

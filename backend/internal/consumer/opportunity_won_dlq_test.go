@@ -24,9 +24,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 
-	"github.com/brickKit/erp-sales/backend/internal/client"
-	"github.com/brickKit/erp-sales/backend/internal/repo"
-	"github.com/brickKit/erp-sales/backend/internal/tcc"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/tcc"
 
 	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
 )
@@ -80,7 +79,7 @@ func TestOpportunityWon_hopCount超限进DLQ且可重新投递(t *testing.T) {
 	nc.Flush()
 
 	r := repo.New(db, "erp_sales_rw", "erp_sales")
-	orch := tcc.New(r, "1", 5*time.Second, "")
+	orch := tcc.New(r, testClients(), "1", 5*time.Second, "")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -107,7 +106,7 @@ func TestOpportunityWon_hopCount超限进DLQ且可重新投递(t *testing.T) {
 	}
 
 	// 确认①这条真的没被 fn 摸过：不会有对应的异常待办。
-	wfConn, closeWf, err := client.Workflow(context.Background())
+	wfConn, closeWf, err := testClients().Workflow(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	besdk "github.com/brickKit/be-sdk-go"
-	"github.com/brickKit/erp-sales/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
 )
 
 // leafDeptID 从 dept_path 的末段推出 dept_id（阶段三 Task 6）。
@@ -47,7 +47,7 @@ func (o *Orchestrator) CreateOrder(ctx context.Context, idempotencyKey, customer
 		return nil, fmt.Errorf("%w: items 不能为空", repo.ErrInvalidArgument)
 	}
 
-	customer, err := fetchActiveCustomer(ctx, customerID)
+	customer, err := o.fetchActiveCustomer(ctx, customerID)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +56,7 @@ func (o *Orchestrator) CreateOrder(ctx context.Context, idempotencyKey, customer
 	for _, it := range items {
 		productIDs = append(productIDs, it.ProductID)
 	}
-	products, err := fetchActiveProducts(ctx, uniqueStrings(productIDs))
+	products, err := o.fetchActiveProducts(ctx, uniqueStrings(productIDs))
 	if err != nil {
 		return nil, err
 	}

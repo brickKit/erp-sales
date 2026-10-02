@@ -40,7 +40,7 @@ var ErrForbidden = errors.New("无权访问该订单")
 //
 // ⚠️ scopePrefix 为空时 strings.HasPrefix 对任何字符串都返回 true——
 // 坐在部门树根节点的人天然看见全部，不需要特判（同 ListOrders 的 SQL
-// 版本 `dept_path LIKE '' || '%'` 是同一件事的两种写法）。
+// 版本 `dept_path LIKE ” || '%'` 是同一件事的两种写法）。
 func (o *Order) InScope(scopePrefix, scopeOwner string) bool {
 	return strings.HasPrefix(o.DeptPath, scopePrefix) || o.OwnerID == scopeOwner
 }

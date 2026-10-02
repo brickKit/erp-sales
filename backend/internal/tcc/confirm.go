@@ -7,10 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 
-	besdk "github.com/brickKit/be-sdk-go"
-
-	"github.com/brickKit/erp-sales/backend/internal/client"
-	"github.com/brickKit/erp-sales/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
 
 	inventoryv1 "github.com/brickKit/erp-inventory/gen/erp/inventory/v1"
 	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
@@ -41,7 +38,7 @@ func (o *Orchestrator) ConfirmOrder(ctx context.Context, orderID, idempotencyKey
 	}
 
 	// ① BatchGet 客户
-	if _, err := fetchActiveCustomer(ctx, order.CustomerID); err != nil {
+	if _, err := o.fetchActiveCustomer(ctx, order.CustomerID); err != nil {
 		return nil, err
 	}
 
@@ -50,7 +47,7 @@ func (o *Orchestrator) ConfirmOrder(ctx context.Context, orderID, idempotencyKey
 	for _, it := range order.Items {
 		productIDs = append(productIDs, it.ProductID)
 	}
-	if _, err := fetchActiveProducts(ctx, uniqueStrings(productIDs)); err != nil {
+	if _, err := o.fetchActiveProducts(ctx, uniqueStrings(productIDs)); err != nil {
 		return nil, err
 	}
 
@@ -65,7 +62,7 @@ func (o *Orchestrator) ConfirmOrder(ctx context.Context, orderID, idempotencyKey
 	}
 
 	// ④ Reserve 库存
-	invConn, closeInv, err := client.Inventory(ctx)
+	invConn, closeInv, err := o.Clients.Inventory(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -190,11 +187,11 @@ func (o *Orchestrator) compensateReserve(
 
 // maybeCreateExceptionTask 把"补偿连续失败 3 次"这件事登记成 infra-workflow
 // 的一条 exception 待办（设计计划 §4.4.4，阶段三 Task 8 落地）。两个独立
-// 的"跳过"开关都合法，不是错误：弱依赖没装配（besdk.Endpoint 判 ok==false，
+// 的"跳过"开关都合法，不是错误：弱依赖没装配（WorkflowConfigured 为 false，
 // 阶段二默认就是这样）、或者 exceptionAssigneeSub 还没配置（本阶段没有
 // mdm-org，指派给谁需要显式配置，见 tcc.Orchestrator 的字段注释）。
 func (o *Orchestrator) maybeCreateExceptionTask(ctx context.Context, orderID, idempotencyKey string, logger *slog.Logger) {
-	if _, ok := besdk.Endpoint("infra/workflow", "grpc"); !ok {
+	if !o.Clients.WorkflowConfigured() {
 		logger.Info("infra/workflow 未装配，跳过建异常待办", "order_id", orderID)
 		return
 	}
@@ -203,7 +200,7 @@ func (o *Orchestrator) maybeCreateExceptionTask(ctx context.Context, orderID, id
 		return
 	}
 
-	wfConn, closeWf, err := client.Workflow(ctx)
+	wfConn, closeWf, err := o.Clients.Workflow(ctx)
 	if err != nil {
 		logger.Error("拨号 infra-workflow 失败，跳过建异常待办", "order_id", orderID, "error", err)
 		return

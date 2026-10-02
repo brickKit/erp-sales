@@ -26,8 +26,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	besdk "github.com/brickKit/be-sdk-go"
-	"github.com/brickKit/erp-sales/backend/internal/client"
-	"github.com/brickKit/erp-sales/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
 
 	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
 	customerv1 "github.com/brickKit/mdm-customer/gen/mdm/customer/v1"
@@ -93,7 +92,7 @@ func uniqueSuffix(prefix string) string {
 // createRealCustomer 在真的 mdm-customer 里建一个 ACTIVE 客户，返回其 id。
 func createRealCustomer(t *testing.T, ctx context.Context, creditLimit string) string {
 	t.Helper()
-	conn, closeConn, err := client.Customer(ctx)
+	conn, closeConn, err := testClients().Customer(ctx)
 	if err != nil {
 		t.Fatalf("拨号 mdm-customer 失败: %v", err)
 	}
@@ -113,7 +112,7 @@ func createRealCustomer(t *testing.T, ctx context.Context, creditLimit string) s
 // createRealProduct 在真的 mdm-product 里建一个 ACTIVE 产品，返回其 id。
 func createRealProduct(t *testing.T, ctx context.Context) string {
 	t.Helper()
-	conn, closeConn, err := client.Product(ctx)
+	conn, closeConn, err := testClients().Product(ctx)
 	if err != nil {
 		t.Fatalf("拨号 mdm-product 失败: %v", err)
 	}
@@ -214,7 +213,7 @@ func getRealBalance(t *testing.T, ctx context.Context, realDB *sql.DB, productID
 }
 
 func newTestOrchestrator(db *sql.DB, timeout time.Duration) *Orchestrator {
-	return New(repo.New(db, "erp_sales_rw", "erp_sales"), testWarehouseID, timeout, "")
+	return New(repo.New(db, "erp_sales_rw", "erp_sales"), testClients(), testWarehouseID, timeout, "")
 }
 
 // e2eTestCtx 给"真的调 orch.CreateOrder"这条链路的测试造一个带 Claims 的
@@ -374,7 +373,7 @@ func TestResolveAfterTimeout_真实查到RESERVED(t *testing.T) {
 	receiveRealStock(t, ctx, rdb, productID, "20")
 
 	orchNormal := newTestOrchestrator(db, 5*time.Second)
-	invConn, closeInv, err := client.Inventory(ctx)
+	invConn, closeInv, err := testClients().Inventory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +422,7 @@ func TestReserve_真实超时能自我恢复不panic不出假结果(t *testing.T
 	productID := createRealProduct(t, ctx)
 	receiveRealStock(t, ctx, rdb, productID, "20")
 
-	invConn, closeInv, err := client.Inventory(ctx)
+	invConn, closeInv, err := testClients().Inventory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +471,7 @@ func TestResolveAfterTimeout_查询也超时时写入对账队列(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	invConn, closeInv, err := client.Inventory(ctx)
+	invConn, closeInv, err := testClients().Inventory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +523,7 @@ func TestCompensateReserve_真实释放预留且累加补偿计数(t *testing.T)
 		t.Fatal(err)
 	}
 
-	invConn, closeInv, err := client.Inventory(ctx)
+	invConn, closeInv, err := testClients().Inventory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -608,14 +607,14 @@ func TestCompensateReserve_连续失败3次真建异常待办(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	invConn, closeInv, err := client.Inventory(ctx)
+	invConn, closeInv, err := testClients().Inventory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeInv()
 
 	assigneeSub := uniqueSuffix("reviewer")
-	orch := New(r, testWarehouseID, 5*time.Second, assigneeSub)
+	orch := New(r, testClients(), testWarehouseID, 5*time.Second, assigneeSub)
 
 	// 同一个 idempotencyKey 重复三次——模拟"同一个确认命令的重放，
 	// CancelReservation 幂等地返回同一个结果，但每次都真实累加补偿计数"
@@ -638,7 +637,7 @@ func TestCompensateReserve_连续失败3次真建异常待办(t *testing.T) {
 
 	// 真的查 infra-workflow：这条异常待办应该真实存在、是 PENDING、
 	// assignee 是我们配的 exceptionAssigneeSub。
-	wfConn, closeWf, err := client.Workflow(ctx)
+	wfConn, closeWf, err := testClients().Workflow(ctx)
 	if err != nil {
 		t.Fatalf("拨号 infra-workflow 失败: %v", err)
 	}
@@ -695,7 +694,7 @@ func TestCompensateReserve_未配置exceptionAssigneeSub时跳过建待办(t *te
 		t.Fatal(err)
 	}
 
-	invConn, closeInv, err := client.Inventory(ctx)
+	invConn, closeInv, err := testClients().Inventory(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -717,7 +716,7 @@ func TestCompensateReserve_未配置exceptionAssigneeSub时跳过建待办(t *te
 		t.Fatalf("期望 3 次失败后订单仍然转 SUSPENDED（跳过建待办不该影响这一步），实际 %q", reloaded.Status)
 	}
 
-	wfConn, closeWf, err := client.Workflow(ctx)
+	wfConn, closeWf, err := testClients().Workflow(ctx)
 	if err != nil {
 		t.Fatalf("拨号 infra-workflow 失败: %v", err)
 	}

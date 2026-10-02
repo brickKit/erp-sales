@@ -2,104 +2,11 @@ apiVersion: brickkit/v1
 kind: Component
 
 metadata:
-  id: erp/sales                      # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
-  name: 销售管理
-  version: 1.0.26                    # 精确版本，不接受 ^ / ~ / latest
-                                     # v1.0.26：同 erp/inventory 这次改动，scripts/seed.sh 改成 source infra/scripts/lib/seed-net.sh（含 with_toolbox/get_app_jwt 多身份换取、idfor 反查客户/产品 id），理由同上。真机跑通 make seed（5 条订单，含 dev.superuser/dev.sales.east 两个身份），无业务行为/契约变更。
-                                     # v1.0.25：同上，scripts/seed.sh 的 REST+JWT 换取部分改成工具箱容器 + ServiceName() 地址规则。真机在 servedBy 部署下跑通 make seed（5 条订单，含 dev.superuser/dev.sales.east 两个身份）。无业务行为/契约变更。
-                                     # v1.0.24：同 mdm/customer 这次改动，删掉 deployment.labels 的 prometheus.io/port，理由同上。无业务行为/契约变更。
-                                     # v1.0.23：依赖版本号同步跟进 erp/finance@1.0.11、erp/inventory@1.0.15、mdm/customer@1.0.7、mdm/product@1.0.8，无破坏性变更。
-                                     # v1.0.22：最后一份 vendor 镜像（contracts/vendor/infra/workflow）也改成直接 import infra-workflow 发布的真身 gen/infra/workflow 包——理由与这次 finance/inventory/mdm-customer/mdm-product 四份同批（阶段四调研记录 04 §13）：本组件自己的测试文件把 5 个外壳的真实模块测试放进同一个 Go 测试二进制，即使 infra-workflow 目前分在不同外壳、生产环境不会真的同进程，测试编译阶段依然会把两份内容相同的生成代码一起链进去，触发一模一样的 protobuf 全局注册表撞车。至此本组件 vendor 的全部五份契约镜像都已经改成直接 import 真身，不再保留任何一份逐字复制的镜像代码。gRPC 调用行为、契约面、业务逻辑均无变化，import-scan/单测/contract-check 全绿。
-                                     # v1.0.21：铁律六新增第二类白名单（生成物契约包 gen/<domain>/<name>，与 be-sdk-* 同类，设计书§13.3）——本组件不再 vendor 一份 erp-finance/erp-inventory/ mdm-customer/mdm-product 的生成代码副本，改成直接 import 它们各自发布的真身 gen/ 包。原因：上一版（v1.0.20）尝试的"嵌套 go module + 外壳 replace 去重"经真机测试证明技术上不可行——Go module 系统无法把两个不同 import path 的包合并成一份编译实例，即使 replace 也不行，外壳合并部署时 protobuf 全局注册表撞车的 panic 原样复现（阶段四调研记录 04 §13 有完整推演+最小复现）。这次改动删掉 contracts/vendor/{erp/finance,erp/inventory, mdm/customer,mdm/product} 与 gen/ 下对应的四份镜像，5 处 import 语句改指真身包（别名不变，业务代码零改动），import-scan 门禁新增放行 github.com/brickKit/<repo>/gen/... 这个形状。gen/infra/workflow（vendor 的第五份，跟本组件不同外壳，当前不撞车）保持原样，留给下次触及时再改。 contract-check 的 buf breaking 范围收紧到只查 contracts/erp、 contracts/events（不含 contracts/vendor 只读镜像——这个意图本来就写在注释里，只是命令一直没真的照做，这次一并修正）。gRPC 调用行为、契约面、业务逻辑均无变化，import-scan/单测/contract-check 全绿。
-                                     # v1.0.20：本组件 vendor 的四份契约只读镜像（gen/erp/finance、gen/erp/inventory、 gen/mdm/customer、gen/mdm/product——vendored-contract 模式，设计计划§9）各自拆成独立嵌套 go module，各用一条本地 replace 指回自己（module 边界切在 v1 目录上一级，理由同上）。这是外壳合并部署能把这四份镜像去重指向各自真身的前提（阶段四调研记录 04 §13）——本仓库自己 standalone 构建/测试完全不受影响，import-scan/单测全绿。gen/erp/sales/v1（自己的契约）与 gen/infra/workflow（vendor 的第五份，当前跟本组件不同外壳，不撞车）都没有改动。无业务行为/契约变更。
-                                     # v1.0.19：修复跨组件真故障注入测试的物理库目标错误——receiveRealStock/getRealBalance 曾经把库存直接写进 TEST_PG_DSN（brickkit_test_db），但 test-cross 桥接的真实 erp-inventory 容器读写的是 brickkit_db（测试库与演示库物理分开后两者不再是同一个库），导致 TestConfirmOrder_真实happy_path/TestHandleOpportunityWon_真实建单确认成功等阶段三 Task 14 的核心 TCC/赢单测试长期报"库存不足"，是阶段三收尾排查时才发现的真实回归（业务能力本身没坏，只是这条自动化回归测试失效了）。新增 REAL_PG_DSN 环境变量（test-cross.sh 提供），两个辅助函数改成对它读写，不再跟 erp-sales 自己状态用的 TEST_PG_DSN 混用。纯测试修复，无行为/契约变更。
-    # v1.0.18：消费者测试改用测试私有 subject（`testSubject()`），不再
-    # 直接订阅/发布生产 subject 字面量——04-testing-standard.md §3.4
-    # 第一条要求，系统排查测试完整性时发现全项目只有 infra-notification
-    # 落地过这条，本组件与 erp-inventory/erp-finance/
-    # integration-im-dingtalk 同一批补齐（field-tested-pitfalls-log.md
-    # 类别 E 的 E2）。依赖版本号同步跟进 erp/inventory@1.0.13、
-    # erp/finance@1.0.9（两者同一批补消费者测试 subject）。纯测试基础
-    # 设施修复，无行为/契约变更。
-    # v1.0.17：补 TestProperty_订单状态机不允许法外转移/
-    # TestProperty_CreateOrder并发同key仅执行一次——04-testing-standard.md
-    # §3.2 对"核心交易类组件"的强制要求（L2 必须用属性测试，例子测试
-    # 不够），全项目系统排查测试完整性时发现三个核心交易类组件（本组件/
-    # erp-inventory/erp-finance）从建组件起就没写过一个属性测试，此次
-    # 补齐。状态机属性测试用一个独立复述的 modelStep 函数（不是照抄
-    # write.go 的实现）跟真实调用结果交叉核对，用 rapid 随机生成
-    # confirm/cancel/ship 操作序列；并发幂等测试用 CreateOrder（四个写
-    # 命令里唯一不需要跨组件 gRPC 就能独立验证的一个）补上此前从没测过
-    # 的"并发同 key 只执行一次"。依赖版本号同步跟进
-    # erp/inventory@1.0.12、erp/finance@1.0.8（两者同一批补属性测试）。
-    # 纯补测试，无行为/契约变更。
-    # v1.0.16：补齐 README.md 的"怎么起来"/"怎么用"/"配置项"三节——建
-    # 仓库时留的占位符一直没人回来填，`make docs-check` 的占位符检测
-    # 正则同时修正（原来只查 TBD/TODO/待补，没覆盖实际用的"后补"措辞）。
-    # 依赖版本号同步跟进 mdm/product@1.0.6、erp/inventory@1.0.11、
-    # erp/finance@1.0.7（三者同一批补 README，同样是纯文档修复）。
-    # 无破坏性变更。
-    # v1.0.15：新增 make seed（从零设计——此前订单数据完全来自
-    # crm-opportunity 的 WON 联带效果，本组件其实有完整 REST 面，
-    # POST /orders 等都是真实人类操作不是组件间协议，值得有自己独立的
-    # 演示数据）。dev.superuser 建 3 条（CONFIRMED/SHIPPED/CANCELLED），
-    # dev.sales.east 建 2 条（DRAFT/CONFIRMED），org 维数据样本不再只靠
-    # crm-opportunity 联带的那一两条订单撑着。COMPLETED/CLOSED/
-    # SUSPENDED 三态不种：前两个本阶段没有对应命令，SUSPENDED 只在
-    # 故障注入路径下出现，已有自动化测试覆盖。依赖版本号同步跟进
-    # mdm/customer@1.0.5、mdm/product@1.0.5、erp/inventory@1.0.10、
-    # erp/finance@1.0.6（种子数据丰富度批量整改），无破坏性变更。
-    # v1.0.14：依赖版本号同步跟进 erp/inventory@1.0.9（seed.sh 探测式
-    # 关联的 idempotency_key 改用真实产品 id，无破坏性变更），
-    # dependency-version-scan 真机抓到的连锁漂移。
-    # v1.0.13：依赖版本号同步跟进 erp/inventory@1.0.8（新增 make seed/
-    # db-reset + 修 down 迁移外键漂移 bug，无破坏性变更），
-    # dependency-version-scan 真机抓到的连锁漂移。
-    # v1.0.12：依赖版本号同步跟进 erp/inventory@1.0.7、erp/finance@1.0.5、
-    # infra/workflow@1.0.2（三者都是各自补 docs/手册.md 的
-    # TEST_PG_DSN 示例，无破坏性变更），dependency-version-scan 真机
-    # 抓到的连锁漂移。
-    # v1.0.11：强依赖版本号同步跟进 erp/finance@1.0.4（补 ListEntries
-    # 真实跨法人排除测试，无破坏性变更）——be-acceptance@v0.3.7 的
-    # dependency-version-scan 新 gate 第一次真机抓到活的漂移（不是复盘
-    # 时人工发现的），验证了这个门禁真的有用。
-    # v1.0.10：弱依赖版本号同步跟进 mdm/customer@1.0.4、mdm/product@1.0.4
-    # （新增 make seed/seed-clean，无破坏性变更）。
-                                      # v1.0.3：纯重新构建，deployment.image 之前一直
-                                      # 停在 1.0.1，v1.0.2 的源码改动从没真的打进镜像
-                                      # 过（阶段三 Task 4 核对 brickkit up 真机时发现）；
-                                      # dependencies.components 精确版本号跟着同步到
-                                      # mdm/customer@1.0.2、mdm/product@1.0.2、
-                                      # erp/inventory@1.0.4（三者同一批修复）；
-                                      # v1.0.4：erp/finance 的依赖版本号同步补到
-                                      # 1.0.2（v1.0.3 那次漏了这一条，erp-finance 的
-                                      # 修复晚一步才做完，brickkit up 真的解析成
-                                      # 两个版本节点才发现这个遗漏）；
-                                      # v1.0.6：阶段三 Task 8 收尾——弱依赖 infra/workflow
-                                      # 从"声明但没接线"变成真的调用：补偿连续失败 3 次
-                                      # 调 CreateTask 建异常待办，消费 task.completed.v1
-                                      # 恢复订单（§4.4.4）。新增 exceptionAssigneeSub 配置项，
-                                      # 无破坏性变更；
-                                      # v1.0.7：依赖版本号同步跟进 erp/inventory@1.0.6
-                                      # （升级 be-sdk-go 到 v0.2.4，修 gRPC handler panic
-                                      # 会崩容器的问题，实测踩坑记录 C11），无破坏性变更；
-                                      # v1.0.8：弱依赖版本号同步跟进 infra/workflow@1.0.1
-                                      # （补 event_outbox 周分区维护循环，实测踩坑记录
-                                      # C12）——不同步会让 brickkit up 把 1.0.0/1.0.1
-                                      # 解析成两个不同的节点，真的各起一个容器抢同一组
-                                      # 端口（真机 brickkit up --dry-run 验证过这个后果），
-                                      # 无破坏性变更；
-                                      # v1.0.9：阶段三 Task 14——真正消费 crm.opportunity.won.v1，
-                                      # 赢单自动转订单（附录 E 链路要求的自动路径，crm-opportunity
-                                      # 设计计划 §8 判定的 Fork 点）：新增系统身份客户端变体
-                                      # （CustomerSystem/ProductSystem/InventorySystem/
-                                      # WorkflowSystem，事件 handler 语境没有 JWT 可透传，
-                                      # §14.2.6）+ backend/internal/tcc/opportunity_won.go
-                                      # 编排建单+确认，任何一步失败都建 infra-workflow
-                                      # 异常待办通知事件里的 owner_id，不回传失败给
-                                      # crm-opportunity（CRM 侧赢单状态永不因 ERP 侧失败回滚）。
-                                      # 无破坏性变更，不涉及契约面新增/修改
-  description: 销售报价与订单生命周期、定价、TCC 补偿编排——唯一的链上一环
+  id: erp/sales
+  name: Sales
+  version: 2.0.0
+  description: Sales quotations and the order lifecycle, pricing, and the compensating orchestration that reserves stock when an order is confirmed.
+  repository: https://github.com/brickKit/erp-sales
   license: Apache-2.0
   vendor: brickKit
 
@@ -108,88 +15,58 @@ tags: [erp, sales, order]
 artifacts:
   - type: api-contract
     format: protobuf
-    files:
-      - contracts/erp/sales/v1/sales.proto
-      - contracts/events/sales.events.json
+    files: [contracts/erp/sales/v1/sales.proto, contracts/events/sales.events.json]
   - type: api-contract
     format: openapi
     files: [contracts/sales.openapi.yaml]
-  - type: metadata                   # ← assembly.yaml 靠这一条随组件分发（§3.5）
+  - type: metadata
     files: [assembly.yaml]
 
-# ⚠️ 本组件是阶段二**唯一**一个 dependencies.components 不是空数组的
-# 组件——四条强依赖边全在它身上（设计计划 §5、§6）：两个 mdm 只读枢纽
-# + erp/inventory（物理命令枢纽）+ erp/finance（事件汇枢纽）。
-#
-# infra/workflow 是弱依赖：阶段二它根本不存在（阶段三才建），缺失时
-# 平台**不注入** INFRA_WORKFLOW_ENDPOINT 这个变量——不是空串，是键根本
-# 不存在（总纲 §3.6）。本组件必须用 besdk.Endpoint() 的二值返回判断，
-# ok == false 就跳过建待办、只打日志。这条弱依赖同时是平台验收用例 5
-# 的天然测试场景（设计计划 §5）。
 dependencies:
   components:
-    - mdm/customer@1.0.10
-    - mdm/product@1.0.11
-    - erp/inventory@1.0.18
-    - erp/finance@1.0.14
-    - { id: infra/workflow@1.0.4, optional: true }
-  resources:
-    # ⚠️ engine 逐字参与匹配（设计书 §2.7.3.1）：这里写的词必须与
-    #    brickkit.yaml 的 resources[].engine 完全相同，平台不认别名。
-    - { kind: database, engine: postgresql }   # 产品名：不在替换范围
-    - { kind: mq,       engine: nats }         # 产品名：换 Kafka 是一次迁移，要让平台阻断
+    - mdm/customer@2.0.0
+    - mdm/product@2.0.0
+    - erp/inventory@2.0.0
+    - erp/finance@2.0.0
+    - id: infra/workflow@2.0.0
+      optional: true
 
 configSchema:
   type: object
   properties:
-    pgSchema:                        # ⚠️ 不能叫 databaseSchema，DATABASE_ 是保留前缀
-      type: string
-      default: erp_sales
-    iamJwksUrl:                      # JWT 本地验签的公钥来源。不对 IAM 建依赖边（决策 87）
-      type: string
-    authzBundleUrl:                  # 阶段三 Task 6：功能权限判定的 bundle 轮询地址，
-                                      # 指向 infra-authz。不建依赖边（同 iamJwksUrl 的
-                                      # 判据，设计书 §14.1.4）
-      type: string
-    otelBaseUrl:                     # ⚠️ 不能叫 otelEndpoint，*_ENDPOINT 是保留后缀
-      type: string
-      default: ""                    # 空 → Blackhole Exporter，零成本（§7.5）
-    defaultWarehouseId:              # ConfirmOrder 发起 Reserve 时统一用这一个仓库
-      type: string                   # 必填，无默认值——阶段二没有多仓选货逻辑（设计计划 §9 第 9 条）
-    exceptionAssigneeSub:            # 补偿连续失败 3 次时建的 infra-workflow exception
-      type: string                   # 待办分配给谁——本阶段没有 mdm-org，用配置项形式过
-      default: ""                    # （设计计划 §4.4.4）。留空 = 跳过建待办，只打日志
-  # ⚠️ required 让缺失在 brickkit up --dry-run 生成阶段就报错（004 §3.5
-  # 关键规则：required 又没给 default 的项，装配仓库不写就直接拦下），
-  # 而不是留到容器启动那一刻才靠 rt.Config.MustString panic——同一个
-  # "缺配置该多早失败"的判据，能在生成阶段拦住就不要留到运行时。
-  required: [defaultWarehouseId]
-
+    PG_HOST: {type: string}
+    PG_PORT: {type: string, default: "5432"}
+    PG_DATABASE: {type: string}
+    PG_USER: {type: string}
+    PG_PASSWORD: {type: string, secret: true}
+    PG_SCHEMA: {type: string, default: erp_sales}
+    NATS_URL: {type: string}
+    OTEL_BASE_URL: {type: string, default: ""}
+    AUTHZ_BUNDLE_URL: {type: string}
+    IAM_JWKS_URL: {type: string}
+    DEFAULT_WAREHOUSE_ID: {type: string}
+    EXCEPTION_ASSIGNEE_SUB: {type: string, default: ""}
+  required: [PG_HOST, PG_DATABASE, PG_USER, PG_PASSWORD, NATS_URL, AUTHZ_BUNDLE_URL, IAM_JWKS_URL, DEFAULT_WAREHOUSE_ID]
 
 deployment:
   type: container
-  image: brickenterprise/erp-sales:1.0.26
-  port: 8084                         # 端口册 registry/ports.tsv
+  build: {context: ., dockerfile: Dockerfile}
+  port: 8084
   extraPorts:
-    - { name: grpc, port: 9094 }     # → ERP_SALES_GRPC_ENDPOINT（值仍以 http:// 开头）
-  labels:                            # 平台只搬运，不解释键值。值必须是字符串
+    - {name: grpc, port: 9094}
+  labels:
     prometheus.io/scrape: "true"
-    # prometheus.io/port 原来写在这里——阶段四附加 Task 0.1 真机验证
-    # servedBy 时发现这个标签会跟同外壳其它成员的 prometheus.io/port 撞车
-    # 报错（每个组件的值天然不同，servedBy 的 labels 合并规则没有像 env
-    # 变量合并那样排除这类"语义上必然因组件而异"的标签，已反馈给 brickKit，
-    # 见装配仓库 docs/dev/brickKit反馈-servedBy的labels合并漏了排除规则.md）。
-    # 在 brickKit 修复或给出结论之前，暂时从这里删掉，只在合并后的外壳
-    # 自己的条目上保留一份——跟"合并后指标只能走一个共享抓取端口"这个
-    # 事实本来就一致，不是单纯绕过。
-    prometheus.io/path: "/metrics"
+    prometheus.io/path: /metrics
   resources:
-    requests: { cpu: "200m", memory: "256Mi" }  # 唯一的链上一环，TCC 编排比枢纽重一档
+    requests: {cpu: 200m, memory: 256Mi}
 
 migration:
-  command: ["./migrate", "up"]
+  command: [./migrate, up]
 
 healthCheck:
   type: http
-  path: /healthz                     # ⚠️ 只查本进程存活，严禁查库或查依赖组件（§12.3.6）
-  # startPeriodSeconds 不写：默认就是 60，Go 组件够用（§12.3.5）
+  path: /healthz
+
+local:
+  language: go
+  runCommand: [go, run, ./backend/cmd/server]

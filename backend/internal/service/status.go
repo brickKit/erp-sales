@@ -6,8 +6,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/brickKit/erp-sales/backend/internal/repo"
-	"github.com/brickKit/erp-sales/backend/internal/tcc"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/tcc"
 )
 
 // ToStatus 把 repo/tcc 层的哨兵错误翻成 gRPC status——HTTP 与 gRPC 两条

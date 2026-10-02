@@ -14,8 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brickKit/erp-sales/backend/internal/client"
-	"github.com/brickKit/erp-sales/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
 
 	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
 )
@@ -119,7 +118,7 @@ func TestHandleOpportunityWon_库存不足时不建单确认(t *testing.T) {
 	// 真的建了一条异常待办，assignee 是事件里带的 owner_id（不是静态配置的
 	// exceptionAssigneeSub——那是另一条独立路径，见 opportunity_won.go 的
 	// createOpportunityExceptionTask 注释）。
-	wfConn, closeWf, err := client.WorkflowSystem()
+	wfConn, closeWf, err := testClients().WorkflowSystem()
 	if err != nil {
 		t.Fatalf("拨号 infra-workflow 失败: %v", err)
 	}

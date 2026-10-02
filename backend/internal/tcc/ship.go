@@ -4,8 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/brickKit/erp-sales/backend/internal/client"
-	"github.com/brickKit/erp-sales/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
 
 	inventoryv1 "github.com/brickKit/erp-inventory/gen/erp/inventory/v1"
 )
@@ -24,7 +23,7 @@ func (o *Orchestrator) ShipOrder(ctx context.Context, orderID, idempotencyKey st
 		return nil, fmt.Errorf("%w: order id=%s 没有 reservation_id，无法发货", repo.ErrInvalidArgument, orderID)
 	}
 
-	conn, closeConn, err := client.Inventory(ctx)
+	conn, closeConn, err := o.Clients.Inventory(ctx)
 	if err != nil {
 		return nil, err
 	}

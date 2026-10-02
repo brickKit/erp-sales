@@ -19,8 +19,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/brickKit/erp-sales/backend/internal/client"
-	"github.com/brickKit/erp-sales/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/client"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
 
 	inventoryv1 "github.com/brickKit/erp-inventory/gen/erp/inventory/v1"
 	customerv1 "github.com/brickKit/mdm-customer/gen/mdm/customer/v1"
@@ -38,8 +38,9 @@ var ErrReservePending = errReservePending
 // Orchestrator 持有编排四条命令需要的一切：本地仓储 + 平台级配置。
 type Orchestrator struct {
 	Repo               *repo.Repo
-	DefaultWarehouseID string        // 设计计划 §9 第 9 条：阶段二没有多仓选货逻辑
-	ReserveTimeout     time.Duration // Reserve/GetReservationStatus 各自的超时（§4.5 的"掐短"）
+	Clients            *client.Clients // 拨号依赖组件（地址来自 rt.Config）
+	DefaultWarehouseID string          // 设计计划 §9 第 9 条：阶段二没有多仓选货逻辑
+	ReserveTimeout     time.Duration   // Reserve/GetReservationStatus 各自的超时（§4.5 的"掐短"）
 	// ExceptionAssigneeSub 是补偿连续失败时建的 exception 待办分配给谁——
 	// 本阶段没有 mdm-org，用最简单的配置项形式过（阶段三 Task 8 明文
 	// 要求，不要提前实现组织树路由，设计计划 §4.4.4）。留空表示这项
@@ -48,9 +49,9 @@ type Orchestrator struct {
 	ExceptionAssigneeSub string
 }
 
-func New(r *repo.Repo, defaultWarehouseID string, reserveTimeout time.Duration, exceptionAssigneeSub string) *Orchestrator {
+func New(r *repo.Repo, clients *client.Clients, defaultWarehouseID string, reserveTimeout time.Duration, exceptionAssigneeSub string) *Orchestrator {
 	return &Orchestrator{
-		Repo: r, DefaultWarehouseID: defaultWarehouseID, ReserveTimeout: reserveTimeout,
+		Repo: r, Clients: clients, DefaultWarehouseID: defaultWarehouseID, ReserveTimeout: reserveTimeout,
 		ExceptionAssigneeSub: exceptionAssigneeSub,
 	}
 }
@@ -79,8 +80,8 @@ func uniqueStrings(in []string) []string {
 
 // ── 客户/产品校验：CreateOrder 与 ConfirmOrder 共用 ──
 
-func fetchActiveCustomer(ctx context.Context, customerID string) (*customerv1.Customer, error) {
-	conn, closeConn, err := client.Customer(ctx)
+func (o *Orchestrator) fetchActiveCustomer(ctx context.Context, customerID string) (*customerv1.Customer, error) {
+	conn, closeConn, err := o.Clients.Customer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -100,8 +101,8 @@ func fetchActiveCustomer(ctx context.Context, customerID string) (*customerv1.Cu
 	return c, nil
 }
 
-func fetchActiveProducts(ctx context.Context, productIDs []string) (map[string]*productv1.Product, error) {
-	conn, closeConn, err := client.Product(ctx)
+func (o *Orchestrator) fetchActiveProducts(ctx context.Context, productIDs []string) (map[string]*productv1.Product, error) {
+	conn, closeConn, err := o.Clients.Product(ctx)
 	if err != nil {
 		return nil, err
 	}

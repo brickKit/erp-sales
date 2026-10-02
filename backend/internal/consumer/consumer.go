@@ -19,8 +19,8 @@ import (
 	besdk "github.com/brickKit/be-sdk-go"
 	"github.com/nats-io/nats.go"
 
-	"github.com/brickKit/erp-sales/backend/internal/repo"
-	"github.com/brickKit/erp-sales/backend/internal/tcc"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/tcc"
 )
 
 func Start(ctx context.Context, db *sql.DB, role, schema string, nc *nats.Conn, orch *tcc.Orchestrator, logger *slog.Logger) error {

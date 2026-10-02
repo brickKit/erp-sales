@@ -9,8 +9,8 @@ import (
 
 	salesv1 "github.com/brickKit/erp-sales/gen/erp/sales/v1"
 
-	"github.com/brickKit/erp-sales/backend/internal/repo"
-	"github.com/brickKit/erp-sales/backend/internal/service"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/service"
 )
 
 type server struct {

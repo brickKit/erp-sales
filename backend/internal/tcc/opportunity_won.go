@@ -18,10 +18,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	besdk "github.com/brickKit/be-sdk-go"
-
-	"github.com/brickKit/erp-sales/backend/internal/client"
-	"github.com/brickKit/erp-sales/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
 
 	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
 	customerv1 "github.com/brickKit/mdm-customer/gen/mdm/customer/v1"
@@ -78,8 +75,8 @@ func (o *Orchestrator) HandleOpportunityWon(ctx context.Context, p OpportunityWo
 // fetchActiveCustomerSystem/fetchActiveProductsSystem 同 tcc.go 的
 // fetchActiveCustomer/fetchActiveProducts，唯一区别是用 client.*System
 // 系统身份拨号（见 client.go 的 dialSystem 注释）。
-func fetchActiveCustomerSystem(ctx context.Context, customerID string) (*customerv1.Customer, error) {
-	conn, closeConn, err := client.CustomerSystem()
+func (o *Orchestrator) fetchActiveCustomerSystem(ctx context.Context, customerID string) (*customerv1.Customer, error) {
+	conn, closeConn, err := o.Clients.CustomerSystem()
 	if err != nil {
 		return nil, err
 	}
@@ -99,8 +96,8 @@ func fetchActiveCustomerSystem(ctx context.Context, customerID string) (*custome
 	return c, nil
 }
 
-func fetchActiveProductsSystem(ctx context.Context, productIDs []string) (map[string]*productv1.Product, error) {
-	conn, closeConn, err := client.ProductSystem()
+func (o *Orchestrator) fetchActiveProductsSystem(ctx context.Context, productIDs []string) (map[string]*productv1.Product, error) {
+	conn, closeConn, err := o.Clients.ProductSystem()
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +128,7 @@ func (o *Orchestrator) createOrderForOpportunity(ctx context.Context, p Opportun
 		return nil, fmt.Errorf("%w: items 不能为空", repo.ErrInvalidArgument)
 	}
 
-	customer, err := fetchActiveCustomerSystem(ctx, p.CustomerID)
+	customer, err := o.fetchActiveCustomerSystem(ctx, p.CustomerID)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +137,7 @@ func (o *Orchestrator) createOrderForOpportunity(ctx context.Context, p Opportun
 	for _, it := range p.Items {
 		productIDs = append(productIDs, it.ProductID)
 	}
-	products, err := fetchActiveProductsSystem(ctx, uniqueStrings(productIDs))
+	products, err := o.fetchActiveProductsSystem(ctx, uniqueStrings(productIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -193,14 +190,14 @@ func (o *Orchestrator) confirmOrderForOpportunity(ctx context.Context, orderID, 
 		return nil, fmt.Errorf("%w: order id=%s status=%s", repo.ErrOrderNotDraft, orderID, order.Status)
 	}
 
-	if _, err := fetchActiveCustomerSystem(ctx, order.CustomerID); err != nil {
+	if _, err := o.fetchActiveCustomerSystem(ctx, order.CustomerID); err != nil {
 		return nil, err
 	}
 	productIDs := make([]string, 0, len(order.Items))
 	for _, it := range order.Items {
 		productIDs = append(productIDs, it.ProductID)
 	}
-	if _, err := fetchActiveProductsSystem(ctx, uniqueStrings(productIDs)); err != nil {
+	if _, err := o.fetchActiveProductsSystem(ctx, uniqueStrings(productIDs)); err != nil {
 		return nil, err
 	}
 
@@ -213,7 +210,7 @@ func (o *Orchestrator) confirmOrderForOpportunity(ctx context.Context, orderID, 
 			repo.ErrInvalidArgument, order.CustomerID, creditExposure, order.TotalAmount, creditLimit)
 	}
 
-	invConn, closeInv, err := client.InventorySystem()
+	invConn, closeInv, err := o.Clients.InventorySystem()
 	if err != nil {
 		return nil, err
 	}
@@ -242,12 +239,12 @@ func (o *Orchestrator) confirmOrderForOpportunity(ctx context.Context, orderID, 
 // 两条独立的路径：本函数覆盖的是"建单/确认这条自动链路本身失败"（可能
 // 根本没有 Reserve 成功过，比如库存不足直接被拒），不要求补偿失败过。
 func (o *Orchestrator) createOpportunityExceptionTask(ctx context.Context, p OpportunityWonPayload, reason string, logger *slog.Logger) {
-	if _, ok := besdk.Endpoint("infra/workflow", "grpc"); !ok {
+	if !o.Clients.WorkflowConfigured() {
 		logger.Info("infra/workflow 未装配，跳过建异常待办", "opportunity_id", p.OpportunityID)
 		return
 	}
 
-	wfConn, closeWf, err := client.WorkflowSystem()
+	wfConn, closeWf, err := o.Clients.WorkflowSystem()
 	if err != nil {
 		logger.Error("拨号 infra-workflow 失败，跳过建异常待办", "opportunity_id", p.OpportunityID, "error", err)
 		return

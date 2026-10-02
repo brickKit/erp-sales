@@ -4,8 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/brickKit/erp-sales/backend/internal/client"
-	"github.com/brickKit/erp-sales/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
 
 	inventoryv1 "github.com/brickKit/erp-inventory/gen/erp/inventory/v1"
 )
@@ -41,7 +40,7 @@ func (o *Orchestrator) CancelOrder(ctx context.Context, orderID, idempotencyKey,
 }
 
 func (o *Orchestrator) cancelReservation(ctx context.Context, reservationID, idempotencyKey string) error {
-	conn, closeConn, err := client.Inventory(ctx)
+	conn, closeConn, err := o.Clients.Inventory(ctx)
 	if err != nil {
 		return err
 	}

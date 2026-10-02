@@ -19,8 +19,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	besdk "github.com/brickKit/be-sdk-go"
-	"github.com/brickKit/erp-sales/backend/internal/repo"
-	"github.com/brickKit/erp-sales/backend/internal/service"
+	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
+	"github.com/brickKit/erp-sales/v2/backend/internal/service"
 )
 
 func RegisterRoutes(eng *gin.Engine, svc *service.Service) {
