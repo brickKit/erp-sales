@@ -13,8 +13,10 @@
 package http
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -149,18 +151,45 @@ func getOrderHandler(svc *service.Service) gin.HandlerFunc {
 	}
 }
 
+// parseListInput 读 GET /orders 的查询参数。created_after / created_before
+// 是 RFC 3339 时间，不传就由 repo 补默认窗口；格式不对返回错误（handler
+// 回 400），不悄悄忽略。
+func parseListInput(c *gin.Context) (repo.ListInput, error) {
+	pageSize, _ := strconv.Atoi(c.Query("page_size"))
+	in := repo.ListInput{
+		Cursor: c.Query("cursor"), PageSize: pageSize,
+		CustomerID: c.Query("customer_id"), StatusFilter: c.Query("status_filter"),
+		ViewMine: c.Query("view") == "mine",
+	}
+	for _, p := range []struct {
+		name string
+		dst  *time.Time
+	}{{"created_after", &in.CreatedAfter}, {"created_before", &in.CreatedBefore}} {
+		raw := c.Query(p.name)
+		if raw == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return in, fmt.Errorf("%s 不是 RFC 3339 时间：%q", p.name, raw)
+		}
+		*p.dst = t
+	}
+	return in, nil
+}
+
 // listOrdersHandler：?view=mine|dept 决定用 org 维还是 owner 维（设计
 // 计划 §1 的两个视图，见 repo.ListInput 同名字段注释）。省略时默认
 // dept——"本部门及下级"是更常见的默认视角（管理者打开列表页通常想看
 // 团队全貌），"我的订单"是窄化的显式选择。
 func listOrdersHandler(svc *service.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		pageSize, _ := strconv.Atoi(c.Query("page_size"))
-		out, err := svc.ListOrders(c.Request.Context(), repo.ListInput{
-			Cursor: c.Query("cursor"), PageSize: pageSize,
-			CustomerID: c.Query("customer_id"), StatusFilter: c.Query("status_filter"),
-			ViewMine: c.Query("view") == "mine",
-		})
+		in, err := parseListInput(c)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		out, err := svc.ListOrders(c.Request.Context(), in)
 		if err != nil {
 			_ = c.Error(service.ToStatus(err))
 			return
