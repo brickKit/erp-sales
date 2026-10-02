@@ -10,7 +10,7 @@ import (
 )
 
 // ShipOrder 预留转实际出库（调 erp-inventory.ConfirmIssue），只有
-// CONFIRMED 才能发货（设计计划 §2.1 状态机）。
+// CONFIRMED 才能发货。
 func (o *Orchestrator) ShipOrder(ctx context.Context, orderID, idempotencyKey string) (*repo.Order, error) {
 	order, err := o.Repo.GetOrder(ctx, orderID)
 	if err != nil {

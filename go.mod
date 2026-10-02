@@ -22,24 +22,12 @@ require (
 	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa // indirect
 )
 
-// erp-finance/gen/erp/finance、erp-inventory/gen/erp/inventory、
-// infra-workflow/gen/infra/workflow、mdm-customer/gen/mdm/customer、
-// mdm-product/gen/mdm/product 这五条是各自组件真身发布的生成物契约包
-// （铁律六第二类白名单，设计书 §13.3、`make import-scan` 放行
-// github.com/brickKit/<repo>/gen/... 这个形状），本组件直接 import——
-// 不再逐字复制一份放进自己仓库的 contracts/vendor/（那个目录已经清空
-// 删除，本组件不再 vendor 任何契约镜像）。
-//
-// 阶段四曾经先试过"本组件自己 vendor 一份 + 外壳用 replace 去重"，发现
-// Go module 系统没法把两个不同 import path 合并成一份编译实例：即使
-// replace A => B，A 和 B 依然是两个独立的包，各自的 init() 都会往
-// protobuf 全局注册表注册一次同一个文件/类型全名，第二次直接 panic
-// （阶段四调研记录 04 §13 有完整推演，含最小复现）。真正的解法是这五条
-// 直接 import 真身，不留镜像，从根上让"只有一份编译实例"这件事物理成立。
-// infra-workflow 虽然当前跟本组件不同外壳（生产环境不会真的同进程），
-// 但本仓库自己的 shells/go 测试文件把 5 个外壳的真实模块测试放进同一个
-// Go 测试二进制，编译阶段依然会把两份内容相同的生成代码一起链进去，
-// 触发一模一样的撞车，所以这条也一并改掉，不留任何一份镜像。
+// 上游的五个契约包（erp-finance、erp-inventory、infra-workflow、mdm-customer、
+// mdm-product 各自 gen/ 下的嵌套模块）直接 require 各自发布的 tag，不在本仓库里
+// 复制一份：同一份生成代码以两个 import 路径进同一个外壳（或同一个测试二进制）时，
+// 两份 init() 都往 protobuf 全局注册表注册同一个类型全名，第二次直接 panic，
+// replace 也合并不了两个不同的 import 路径。make import-scan 只放行
+// github.com/brickKit/<repo>/gen/... 这个形状。
 
 require (
 	github.com/MicahParks/jwkset v0.11.3 // indirect
@@ -107,4 +95,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
+// gen/erp/sales 是本仓库里嵌套的独立模块：调用方只 require 契约包、不拉整个组件，
+// 进同一个外壳时最小版本选择只选出一份生成代码。模块路径不能以 /v1 结尾，所以边界
+// 切在 v1 的上一级。这条 replace 只给本仓库自己构建用；别人拉取时用的是 require 里
+// 的契约包 tag。
 replace github.com/brickKit/erp-sales/gen/erp/sales => ./gen/erp/sales

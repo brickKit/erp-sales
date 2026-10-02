@@ -1,11 +1,13 @@
-// Package consumer 消费 finance.credit.rejected.v1（权威额度超限→订单
-// 转 SUSPENDED）+ mdm.customer.created.v1/.updated.v1（维护
-// customer_snapshots.credit_limit）+ infra.workflow.task.completed.v1
-// （补偿异常待办被人工确认已处理→订单从 SUSPENDED 恢复回 DRAFT，设计
-// 计划 §4.4.4，阶段三 Task 8 落地）+ crm.opportunity.won.v1（赢单自动
-// 转订单，阶段三 Task 14 落地，见 backend/internal/tcc/opportunity_won.go）。
-// ⚠️ 不消费 finance.voucher.posted.v1——它没有 customer_id，
-// credit_exposure 的新鲜度靠定时对账（设计计划 §9 第 6 条）。
+// Package consumer 消费五个 subject：
+//   - finance.credit.rejected.v1：权威额度判定超限 → 订单转 SUSPENDED；
+//   - mdm.customer.created.v1 / .updated.v1：维护 customer_snapshots.credit_limit；
+//   - infra.workflow.task.completed.v1：补偿异常待办被人确认已处理 → 订单从
+//     SUSPENDED 恢复回 DRAFT；
+//   - crm.opportunity.won.v1：赢单自动转订单（见 backend/internal/tcc/opportunity_won.go）。
+//
+// 不消费 finance.voucher.posted.v1：它没有 customer_id，对不上客户；
+// credit_exposure 要靠与 erp/finance 对账维护（还没有实现，见 docs/design.md
+// 的未决问题）。
 package consumer
 
 import (
@@ -47,12 +49,12 @@ func Start(ctx context.Context, db *sql.DB, role, schema string, nc *nats.Conn, 
 	case <-ctx.Done():
 		return nil
 	case err := <-errCh:
-		return err // ⚠️ 返回 error，不许 log.Fatal（§13.3 铁律七）
+		return err // 返回 error，不 log.Fatal：一个模块退出进程，同一外壳里的成员全跟着没了
 	}
 }
 
-// creditRejectedPayload 字段直接照抄 erp-finance 已经真实存在的契约
-// （erp-finance Task 12，contracts/events/finance.events.json）。
+// creditRejectedPayload 字段照 erp/finance 的事件契约
+// （contracts/events/finance.events.json 的 finance.credit.rejected.v1）。
 type creditRejectedPayload struct {
 	CustomerID string `json:"customer_id"`
 	OrderID    string `json:"order_id"`
@@ -105,7 +107,7 @@ type workflowTaskCompletedPayload struct {
 // workflowTaskCompletedHandler 只关心自己发起的 sales_order 异常待办——
 // infra-workflow 是全平台共用的待办箱，同一个 subject 下会有别的业务
 // 组件发起的待办完成事件，source_component/source_aggregate 过滤是
-// 必须的，不能假设收到的每一条都是自己的（设计计划 §4.4.4）。
+// 必须的，不能假设收到的每一条都是自己的。
 //
 // ⚠️ 只在 action == "APPROVED" 时恢复订单——这是人在 infra-workflow 的
 // "我的待办"里点"同意"，对 exception 任务的业务含义是"确认已经人工
@@ -135,9 +137,10 @@ func workflowTaskCompletedHandler() func(context.Context, *sql.Tx, besdk.Event) 
 	}
 }
 
-// opportunityWonItemPayload/opportunityWonPayload 字段照抄 crm-opportunity
-// 已经真实存在的契约（contracts/events/opportunity.events.json 的
-// crm.opportunity.won.v1，crm-opportunity 设计计划 §4.1 的字段表）。
+// opportunityWonItemPayload/opportunityWonPayload 字段照 crm/opportunity 的
+// 事件契约（contracts/events/opportunity.events.json 的 crm.opportunity.won.v1）。
+// 不 import 对方的代码，逐字段照抄；revision 与信封的 version 同值，取信封的；
+// expected_close_date 用不到，不取。
 type opportunityWonItemPayload struct {
 	ProductID       string `json:"product_id"`
 	Quantity        string `json:"quantity"`
@@ -153,15 +156,15 @@ type opportunityWonPayload struct {
 	Currency      string                      `json:"currency"`
 }
 
-// opportunityWonHandler 消费赢单事件、自动转订单（阶段三 Task 14，设计
-// 计划 §8 判定的 Fork 点，本阶段选自动）。⚠️ 真正的建单/确认编排在
-// tcc.Orchestrator.HandleOpportunityWon 里，不在这里、也不用这个 handler
-// 拿到的 tx——那条编排要做真实的跨组件 gRPC 调用（BatchGet/Reserve），
-// 网络往返期间不能占着这张 event_inbox 记账用的短事务（同 ConfirmOrder
-// 正常路径"事务要短，网络调用留在事务之外"的既有判据）。本 handler
-// 永远返回 nil：crm.opportunity.won.v1 只应该被消费一次，失败与否由
-// HandleOpportunityWon 内部决定要不要建异常待办，不是靠事件总线重投
-// （be-sdk-go 当前实现本来就不支持重投，见 besdk.Consume 自己的文档）。
+// opportunityWonHandler 消费赢单事件、自动转订单（赢单转订单走自动路径；
+// 也可以做成人工建单，这是一个可选的分叉点）。真正的建单/确认编排在
+// tcc.Orchestrator.HandleOpportunityWon 里，它不用这个 handler 拿到的 tx：
+// 订单的落库在它自己的短事务里，网络调用（BatchGet / Reserve）在事务之外，
+// 与 ConfirmOrder 的正常路径一样。注意 besdk.Consume 的 inbox 事务在 handler
+// 返回之前一直开着，所以转单期间占着一条数据库连接（每个赢单事件至多几次
+// 调用超时那么久）。本 handler 永远返回 nil：失败与否由 HandleOpportunityWon
+// 自己决定要不要开异常待办，不靠事件重投（besdk.Consume 走 NATS 核心订阅，
+// handler 返回 error 只记日志，不会重投）。
 func opportunityWonHandler(orch *tcc.Orchestrator, logger *slog.Logger) func(context.Context, *sql.Tx, besdk.Event) error {
 	return func(ctx context.Context, _ *sql.Tx, ev besdk.Event) error {
 		var p opportunityWonPayload

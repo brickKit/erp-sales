@@ -1,4 +1,4 @@
-// Package grpc 实现 erp.sales.v1.SalesService——内部 gRPC 面（§2.1）。
+// Package grpc 实现 erp.sales.v1.SalesService：组件之间调用本组件的 gRPC 面。
 // HTTP 与 gRPC 共用同一个 service.Service，业务逻辑只写一遍。
 package grpc
 
@@ -172,7 +172,8 @@ func (s *server) ListOrders(ctx context.Context, req *salesv1.ListOrdersRequest)
 	return &salesv1.ListOrdersResponse{Orders: orders, NextCursor: out.NextCursor}, nil
 }
 
-// BatchGetOrder 是防 N+1 的唯一合法调用方式（§3.8）。
+// BatchGetOrder 是别的组件一次取多张订单的方式（防 N+1）：找不到的 id 放进
+// missing_ids，不让整批失败。
 func (s *server) BatchGetOrder(ctx context.Context, req *salesv1.BatchGetOrderRequest) (*salesv1.BatchGetOrderResponse, error) {
 	found, missing, err := s.svc.BatchGetOrder(ctx, req.Ids)
 	if err != nil {
@@ -185,8 +186,8 @@ func (s *server) BatchGetOrder(ctx context.Context, req *salesv1.BatchGetOrderRe
 	return &salesv1.BatchGetOrderResponse{Orders: orders, MissingIds: missing}, nil
 }
 
-// GetOrderStatus 给上游防"薛定谔的超时"用（§4.5）。UNSPECIFIED 就是
-// NOT_FOUND 的信号。
+// GetOrderStatus 给调用方在超时之后查"那次命令到底生效了没有"用：响应没收到
+// 不代表请求没被处理，先查状态再决定重试还是放弃。UNSPECIFIED 表示没有这张单。
 func (s *server) GetOrderStatus(ctx context.Context, req *salesv1.GetOrderStatusRequest) (*salesv1.GetOrderStatusResponse, error) {
 	status, err := s.svc.GetOrderStatus(ctx, req.OrderId)
 	if err != nil {

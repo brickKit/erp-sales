@@ -1,13 +1,14 @@
 // Package tcc 编排本组件唯一的跨组件写链路——ConfirmOrder 的 TCC 补偿链
-// （设计计划 §3.1，本阶段最难的一段代码），以及 CancelOrder/ShipOrder 里
-// 同样需要"先调 erp-inventory、再落本地状态"的部分。CreateOrder 不需要
-// TCC（没有需要补偿的外部写），但同样需要先调 mdm-customer/mdm-product
-// 校验+快照，所以也放在这个包里，和真正的 TCC 链共用"先网络调用、
-// 后本地事务"的骨架。
+// （本组件最难的一段代码），以及 CancelOrder / ShipOrder 里同样需要"先调
+// erp-inventory、再落本地状态"的部分。CreateOrder 不需要 TCC（没有需要补偿
+// 的外部写），但同样要先调 mdm-customer / mdm-product 校验并取快照，所以也
+// 放在这里，和 TCC 链共用"先网络调用、后本地事务"的骨架。商机赢单自动转单
+// （opportunity_won.go）是同一套编排的事件入口。
 //
-// ⚠️ 这一层只做编排，不碰 SQL——本地读写全部委托给 repo 包
-// （backend/internal/repo/write.go 的 Finalize* 系列），网络调用全部走
-// backend/internal/client 拨出去的 UserClient。
+// 这一层只做编排，不碰 SQL——本地读写全部委托给 repo 包
+// （backend/internal/repo/write.go 的 Finalize* 系列）。网络调用走
+// backend/internal/client：用户请求路径上透传调用者身份（UserClient），
+// 只有事件 handler 里用系统身份（SystemClient）。
 package tcc
 
 import (
@@ -29,7 +30,7 @@ import (
 
 // errReservePending 是"预留状态未知/未提交，稍后重试或等对账兜底"的
 // 哨兵——不是系统内部错误，service/grpc 两层通过 ToStatus 把它映射成
-// FailedPrecondition/Unavailable（设计计划 §4.5）。
+// Unavailable（503，调用方带同一个幂等键稍后重试）。
 var errReservePending = errors.New("库存预留状态未确定")
 
 // ErrReservePending 导出给 service 层做 errors.Is 判断。
@@ -39,13 +40,12 @@ var ErrReservePending = errReservePending
 type Orchestrator struct {
 	Repo               *repo.Repo
 	Clients            *client.Clients // 拨号依赖组件（地址来自 rt.Config）
-	DefaultWarehouseID string          // 设计计划 §9 第 9 条：阶段二没有多仓选货逻辑
+	DefaultWarehouseID string          // 确认订单时向哪个仓库预留：没有多仓选货逻辑，统一用这一个
 	CallTimeout        time.Duration   // 每一次同步调用依赖组件各自的超时
 	// ExceptionAssigneeSub 是补偿连续失败时建的 exception 待办分配给谁——
-	// 本阶段没有 mdm-org，用最简单的配置项形式过（阶段三 Task 8 明文
-	// 要求，不要提前实现组织树路由，设计计划 §4.4.4）。留空表示这项
-	// 还没配置，跳过建待办只打日志（同 infra/workflow 弱依赖缺失的
-	// 判据——两个独立的"跳过"开关，见 confirm.go 的 maybeCreateExceptionTask）。
+	// 没有组织树可以按部门路由，用一个配置项指定。留空表示还没配置，跳过建
+	// 待办只打日志（与 infra/workflow 缺席是两个独立的"跳过"开关，见
+	// confirm.go 的 maybeCreateExceptionTask）。
 	ExceptionAssigneeSub string
 }
 
@@ -56,11 +56,11 @@ func New(r *repo.Repo, clients *client.Clients, defaultWarehouseID string, callT
 	}
 }
 
-// isDeadlineExceeded 判断一次 gRPC 调用是不是因为 ctx 超时/取消而失败——
+// isDeadlineExceeded 判断一次 gRPC 调用是不是因为超时而失败——
 // 与"服务端明确拒绝"（如库存不足的 FailedPrecondition）必须分开处理，
 // 后者严禁走"先 GetReservationStatus 再决定"这条路径，因为服务端已经
-// 明确告诉我们请求根本没有被受理成功（设计计划 §4.5：只有响应没收到、
-// 不代表请求没处理的情形才需要状态内省）。
+// 明确告诉我们请求没有被受理成功（只有"响应没收到、不代表请求没处理"的
+// 情形才需要状态内省）。
 func isDeadlineExceeded(err error) bool {
 	return status.Code(err) == codes.DeadlineExceeded
 }
@@ -130,8 +130,8 @@ func (o *Orchestrator) fetchActiveProducts(ctx context.Context, productIDs []str
 }
 
 // buildReserveItems 把订单行转成 erp-inventory 的 ReserveItem——统一用
-// 组件级配置的默认仓库（设计计划 §9 第 9 条：阶段二没有多仓选货逻辑，
-// erp-inventory 契约也还没有按 code 查仓库 id 的 rpc）。
+// 组件级配置的默认仓库（没有多仓选货逻辑，erp-inventory 的契约也没有按
+// 仓库 code 查 id 的 rpc）。
 func (o *Orchestrator) buildReserveItems(items []repo.OrderItem) []*inventoryv1.ReserveItem {
 	out := make([]*inventoryv1.ReserveItem, 0, len(items))
 	for _, it := range items {

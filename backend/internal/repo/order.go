@@ -21,8 +21,8 @@ const (
 	StatusSuspended = "SUSPENDED"
 )
 
-// OrderItem 是 sales_order_items 一行的视图。**全部快照，不 join**
-// （设计计划 §2.2）。
+// OrderItem 是 sales_order_items 一行的视图。SKU、名称、单位、价格全部是
+// 建单时的快照，不 join 上游：产品后来改名改价，已经成交的订单不跟着变。
 type OrderItem struct {
 	ProductID   string
 	ProductSKU  string
@@ -36,7 +36,7 @@ type OrderItem struct {
 }
 
 // Order 是 sales_orders 一行 + 其行的视图。dept_id/dept_path/owner_id
-// 是创建时快照（设计计划 §1）。
+// 是创建时快照：人后来换了部门，订单仍归建单时的部门。
 type Order struct {
 	ID                   string
 	OrderNo              string
@@ -113,7 +113,8 @@ func (r *Repo) GetOrder(ctx context.Context, id string) (*Order, error) {
 	return o, nil
 }
 
-// BatchGetOrder 是防 N+1 的唯一合法调用方式（§3.8）。只返回找到的。
+// BatchGetOrder 一次取多张订单（防 N+1）：找到的放 found，找不到的 id 放
+// missing，不让整批失败。
 func (r *Repo) BatchGetOrder(ctx context.Context, ids []string) (found []*Order, missing []string, err error) {
 	for _, id := range ids {
 		o, err := r.GetOrder(ctx, id)
@@ -129,8 +130,8 @@ func (r *Repo) BatchGetOrder(ctx context.Context, ids []string) (found []*Order,
 	return found, missing, nil
 }
 
-// GetOrderStatus 给上游（阶段三的 crm-opportunity）防"薛定谔的超时"用
-// （§4.5）。UNSPECIFIED（空字符串）就是 NOT_FOUND 的信号，不是错误。
+// GetOrderStatus 给调用方在超时之后查"那次命令到底生效了没有"用。
+// UNSPECIFIED（空字符串）就是 NOT_FOUND 的信号，不是错误。
 func (r *Repo) GetOrderStatus(ctx context.Context, id string) (string, error) {
 	orderID, err := parseID("id", id)
 	if err != nil {
@@ -151,7 +152,7 @@ func (r *Repo) GetOrderStatus(ctx context.Context, id string) (string, error) {
 	return status, nil
 }
 
-// ListInput 对应 ListOrdersRequest。刻意没有 offset 字段（决策 53）。
+// ListInput 对应 ListOrdersRequest。刻意没有 offset 字段：列表一律游标分页。
 type ListInput struct {
 	Cursor       string
 	PageSize     int
@@ -161,8 +162,8 @@ type ListInput struct {
 	SourceOpportunityID string
 	CreatedAfter        time.Time
 	CreatedBefore       time.Time
-	// ── 阶段三 Task 6：org/owner 两维数据范围，"我的订单"和"本部门及
-	// 下级的订单"是销售组织最基本的两个视图（设计计划 §1），由调用方
+	// ── org / owner 两维数据范围："我的订单"和"本部门及下级的订单"是
+	// 销售组织最基本的两个视图，由调用方
 	// （listOrdersHandler 的 ?view= 参数）静态选择用哪一个，本函数只
 	// 负责把选中的那个拼进 WHERE——同一条 SQL 不会同时用两个（那样会把
 	// "本部门"缩窄成"本部门里我自己的"，不是设计要的两个独立视图）。
@@ -198,7 +199,7 @@ func (r *Repo) ListOrders(ctx context.Context, in ListInput) (*ListResult, error
 			query += fmt.Sprintf(" AND owner_id = $%d", len(args))
 		} else {
 			// ScopePrefix 为空（部门树根节点）时 `LIKE '' || '%'` 等价于
-			// `LIKE '%'`，天然匹配全部，不需要特判（§14.2.4 的既有判据）。
+			// `LIKE '%'`，天然匹配全部，不需要特判。
 			args = append(args, in.ScopePrefix)
 			query += fmt.Sprintf(" AND dept_path LIKE $%d || '%%'", len(args))
 		}

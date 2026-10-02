@@ -1,8 +1,7 @@
-// 阶段三 Task 14：crm.opportunity.won.v1 的消费入口——赢单转订单是本
-// 阶段选定的自动路径（设计计划 §8 判定为 Fork 点，本阶段选自动；
-// crm-opportunity 设计计划 §6/§4.1、附录 E）。
+// crm.opportunity.won.v1 的消费入口：商机赢单自动转成订单并确认（也可以做成
+// 人工建单，这是一个可选的分叉点，本组件选自动）。
 //
-// ⚠️ 这段代码跑在事件 handler 里，没有 JWT 可透传（§14.2.6）：归属信息
+// 这段代码跑在事件 handler 里，没有 JWT 可透传：归属信息
 // （owner_id/dept_path）与身份（SystemClient）都必须来自事件本身，不能
 // 走 besdk.ScopeOf(ctx)/UserClient。这也是为什么本文件不直接复用
 // CreateOrder/ConfirmOrder 两个公开方法——它们内部硬编码了 UserClient
@@ -27,16 +26,15 @@ import (
 
 // OpportunityWonItem 对应 crm.opportunity.won.v1 payload 的 items[] 一项。
 // ⚠️ QuotedUnitPrice 是报价快照供参考，不是权威价格——本组件用自己的
-// 定价引擎（CalculatePriceDryRun）重算，两者允许不一致（crm-opportunity
-// 设计计划 §2.1，本组件契约注释同一句话已经写过一次）。
+// 定价引擎（CalculatePriceDryRun）重算，两者允许不一致。
 type OpportunityWonItem struct {
 	ProductID       string
 	Quantity        string
 	QuotedUnitPrice string
 }
 
-// OpportunityWonPayload 对应 crm.opportunity.won.v1 的完整 payload
-// （crm-opportunity 设计计划 §4.1 的字段表）。⭐ OwnerID/DeptPath 是
+// OpportunityWonPayload 对应 crm.opportunity.won.v1 的 payload（用得到的
+// 字段）。OwnerID/DeptPath 是
 // 最容易漏的两个字段——这条事件 handler 唯一能拿到归属信息的地方。
 type OpportunityWonPayload struct {
 	OpportunityID string
@@ -51,9 +49,8 @@ type OpportunityWonPayload struct {
 // HandleOpportunityWon 是本文件唯一的导出入口。⚠️ 不返回 error 给调用方
 // 重试——crm-opportunity 已经真实赢单，这条链路是"尽力而为"地转成订单；
 // 任何一步失败都建一条 infra-workflow 异常待办通知事件里带的 owner_id，
-// 不通过事件回传失败给 crm-opportunity（crm-opportunity 设计计划 §9
-// 待决问题 2：那会让 CRM 反向依赖 ERP 状态机，商机的 WON 状态永远不因为
-// ERP 侧失败而回滚）。
+// 不通过事件回传失败给 crm-opportunity：那会让 CRM 反向依赖 ERP 的状态机；
+// 商机的 WON 状态永远不因为 ERP 侧失败而回滚。
 func (o *Orchestrator) HandleOpportunityWon(ctx context.Context, p OpportunityWonPayload, logger *slog.Logger) {
 	order, err := o.createOrderForOpportunity(ctx, p)
 	if err != nil {
@@ -163,10 +160,9 @@ func (o *Orchestrator) createOrderForOpportunity(ctx context.Context, p Opportun
 	for i, it := range p.Items {
 		prod := products[it.ProductID]
 		pr := priceResults[i]
-		// ⚠️ pr.UnitPrice 是重算出来的权威价格，it.QuotedUnitPrice 只是
-		// 商机行的报价快照——两者允许不一致，只记日志供人工核对差异，
-		// 不做任何自动比对/告警（不在 Task 14 的验证标准内，属于未来
-		// 可能需要的价格审计功能，YAGNI）。
+		// pr.UnitPrice 是重算出来的权威价格，it.QuotedUnitPrice 只是商机行的
+		// 报价快照——两者允许不一致，这里不比对、不告警（价格审计不在本组件
+		// 的范围里）。
 		createItems = append(createItems, repo.CreateOrderItemInput{
 			ProductID: it.ProductID, ProductSKU: prod.Sku, ProductName: prod.Name, UOMID: prod.BaseUomId,
 			Qty: it.Quantity, UnitPrice: pr.UnitPrice, Discount: pr.Discount, TaxRate: pr.TaxRate, Subtotal: pr.Subtotal,
@@ -237,9 +233,8 @@ func (o *Orchestrator) confirmOrderForOpportunity(ctx context.Context, orderID, 
 }
 
 // createOpportunityExceptionTask 建一条 infra-workflow exception 待办，
-// assignee 用事件里带的 owner_id——正好是 crm-opportunity 设计计划 §4.1
-// 里 owner_id 字段的第二个用途（crm-opportunity 设计计划 §9 待决问题
-// 2）。⚠️ 这条待办与 compensateReserve→maybeCreateExceptionTask 那条
+// assignee 用事件里带的 owner_id（商机负责人：转单失败由他来跟进）。
+// 这条待办与 compensateReserve→maybeCreateExceptionTask 那条
 // （补偿连续失败 3 次、assignee 是静态配置的 exceptionAssigneeSub）是
 // 两条独立的路径：本函数覆盖的是"建单/确认这条自动链路本身失败"（可能
 // 根本没有 Reserve 成功过，比如库存不足直接被拒），不要求补偿失败过。

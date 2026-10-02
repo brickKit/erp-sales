@@ -9,19 +9,15 @@ import (
 	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
 )
 
-// leafDeptID 从 dept_path 的末段推出 dept_id（阶段三 Task 6）。
+// leafDeptID 从 dept_path 的末段推出 dept_id。
 //
-// ⚠️ 这不是凭空发明的格式：infra-authz 的极简部门表（阶段三唯一的真实
-// dept_path 来源，departments.go 的 CreateDepartment）本身就是这么算
-// dept_path 的——`parentPath + strconv.FormatInt(id, 10) + "/"`，所以
-// "/1/12/" 这条路径的末段 "12" 恰好就是这个部门自己的 id，不需要额外
-// 一次查询或者往 JWT 里加一个新字段。dept_path 为空（根节点）时
-// dept_id 也是空——两者都表示"没有具体部门"，同一个意思，不用特判。
+// 这不是凭空发明的格式：dept_path 的来源（infra/authz 的部门表）就是按
+// `parentPath + 部门 id + "/"` 拼的，所以 "/1/12/" 的末段 "12" 恰好是这个部门
+// 自己的 id，不需要额外查一次或往 JWT 里加字段。dept_path 为空（根节点）时
+// dept_id 也是空——两者都表示"没有具体部门"，不用特判。
 //
-// 只在本组件内联，不提这进 be-sdk-go：现在只有这一个调用方，SOP-P 的
-// 判据是"逻辑本身简单却硬套抽象是更糟的结果"——等阶段四/五出现第二个
-// 真的需要它的组件（crm-*/hrm-*/prj-*），再把它提升成 SDK 里的公用
-// 函数，现在提前抽象是没有第二个使用者验证过的猜测。
+// 只在本组件内联，不放进 be-sdk-go：现在只有这一个调用方，等出现第二个真的
+// 需要它的组件再提升成 SDK 函数。
 func leafDeptID(deptPath string) string {
 	trimmed := strings.Trim(deptPath, "/")
 	if trimmed == "" {
@@ -33,13 +29,13 @@ func leafDeptID(deptPath string) string {
 
 // CreateOrderItemInput 是 CreateOrder 的入参一项——只有 product_id/qty，
 // 其余快照字段（sku/name/uom/单价/折扣/税率/小计）都在这里解析出来
-// （设计计划 §2.2：全部快照，不 join）。
+// （全部是建单时的快照，不 join 上游）。
 type CreateOrderItemInput struct {
 	ProductID string
 	Qty       string
 }
 
-// CreateOrder 建 DRAFT，不预留库存（设计计划 §3 契约面）。没有需要补偿
+// CreateOrder 建 DRAFT，不预留库存（预留在确认时做）。没有需要补偿
 // 的外部写，所以不是真正的 TCC，但同样要先校验客户/产品、再落库——
 // 跨组件读调用与本地写分离的骨架和 ConfirmOrder 一致。
 func (o *Orchestrator) CreateOrder(ctx context.Context, idempotencyKey, customerID string, items []CreateOrderItemInput) (*repo.Order, error) {
@@ -84,8 +80,7 @@ func (o *Orchestrator) CreateOrder(ctx context.Context, idempotencyKey, customer
 		})
 	}
 
-	// dept_id/dept_path/owner_id 是创建时快照（设计计划 §1）——阶段三
-	// Task 6 从 besdk.ScopeOf(ctx) 取真实值，不再是阶段二的空字符串占位。
+	// dept_id/dept_path/owner_id 是创建时快照，取自调用者的 besdk.ScopeOf(ctx)。
 	scope := besdk.ScopeOf(ctx)
 	return o.Repo.CreateOrder(ctx, repo.CreateOrderInput{
 		IdempotencyKey: idempotencyKey, CustomerID: customerID, CustomerName: customer.Name, Items: createItems,

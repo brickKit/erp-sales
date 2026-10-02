@@ -11,16 +11,16 @@ import (
 // 匹配，防止一张后来又被权威额度判定（finance.credit.rejected.v1）覆盖
 // 过 reason 的 SUSPENDED 订单被"补偿异常已处理"事件误恢复：两条
 // SUSPENDED 来源共用同一个 status 值但语义不同，reason 是唯一的区分
-// 依据（设计计划 §4.4.4）。
+// 依据。
 const ExceptionReasonCompensationFailed = "补偿连续失败 3 次，需要人工介入"
 
-// SuspendOrderTx 把订单转 SUSPENDED（设计计划 §5、§3.1）：权威额度判定
+// SuspendOrderTx 把订单转 SUSPENDED：权威额度判定
 // 超限（消费 finance.credit.rejected.v1）或补偿连续失败 3 次都走这里。
-// ⚠️ 供事件消费路径直接调用，接 *sql.Tx（同 snapshot.go 的判据）。
+// 供事件消费路径直接调用，接 *sql.Tx（不自己开事务，理由同 snapshot.go）。
 //
 // 已经是终态（COMPLETED/CANCELLED/CLOSED）的订单不再转 SUSPENDED——
 // 终态之后的事实不该被一个异步到达的信用判定倒着改（CANCELLED 尤其
-// 不能复活/转移，设计计划 §2.1）。已经是 SUSPENDED 的再收到一次是
+// 不能复活或转移）。已经是 SUSPENDED 的再收到一次是
 // 幂等的，更新 reason 但不报错。
 func SuspendOrderTx(ctx context.Context, tx *sql.Tx, orderID int64, reason string) error {
 	var current string
@@ -44,7 +44,7 @@ func SuspendOrderTx(ctx context.Context, tx *sql.Tx, orderID int64, reason strin
 }
 
 // IncrementCompensationAttemptsTx 累加补偿失败计数，连续失败 3 次转
-// SUSPENDED（设计计划 §3.1、§4.4.4）。返回累加后的次数。
+// SUSPENDED。返回累加后的次数。
 func IncrementCompensationAttemptsTx(ctx context.Context, tx *sql.Tx, orderID int64) (int, error) {
 	var attempts int
 	if err := tx.QueryRowContext(ctx, `
@@ -61,11 +61,11 @@ func IncrementCompensationAttemptsTx(ctx context.Context, tx *sql.Tx, orderID in
 }
 
 // ResumeFromExceptionTx 把订单从 SUSPENDED 恢复回 DRAFT、清零补偿失败
-// 计数——由消费 infra.workflow.task.completed.v1 的 consumer 调用（设计
-// 计划 §4.4.4，阶段三 Task 8 落地）。⚠️ 只有当前 reason 精确等于
+// 计数——由消费 infra.workflow.task.completed.v1 的 consumer 调用（人在待办
+// 里确认补偿异常已处理）。只有当前 reason 精确等于
 // ExceptionReasonCompensationFailed 才恢复，见该常量注释；不匹配时不
-// 报错，返回 resumed=false 交给调用方决定要不要记一条排障日志（同
-// SuspendOrderTx 的既有判据：终态/不匹配的情形是设计的边界，不是错误）。
+// 报错，返回 resumed=false 交给调用方决定要不要记一条排障日志（与
+// SuspendOrderTx 一样：终态 / 不匹配的情形是设计的边界，不是错误）。
 //
 // ⚠️ 恢复目标是 DRAFT 而不是直接当作"已确认"——FinalizeConfirm 从未
 // 提交成功过（正是它失败才触发的补偿），订单本来就没有一个可恢复的

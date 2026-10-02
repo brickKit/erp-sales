@@ -9,10 +9,10 @@ import (
 	inventoryv1 "github.com/brickKit/erp-inventory/gen/erp/inventory/v1"
 )
 
-// CancelOrder 释放预留（如果有）+ 落库 + 发事件（设计计划 §3 契约面）。
+// CancelOrder 释放预留（如果有）+ 落库 + 发事件。
 // DRAFT 从没预留过库存，直接落库；CONFIRMED 需要先调
 // erp-inventory.CancelReservation 才能落库；CANCELLED 幂等；其余状态
-// 不可取消（设计计划 §2.1：CANCELLED 是终态，不能复活，也意味着
+// 不可取消（CANCELLED 是终态，不能复活，也意味着
 // SHIPPED/COMPLETED/CLOSED 之后不能反向取消）。
 func (o *Orchestrator) CancelOrder(ctx context.Context, orderID, idempotencyKey, reason string) (*repo.Order, error) {
 	order, err := o.Repo.GetOrder(ctx, orderID)

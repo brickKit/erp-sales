@@ -1,10 +1,10 @@
 // sales_orders/sales_order_items 的月分区维护——订单是纯日历滚动窗口
 // （同 erp-inventory 的月分区判据），复用 partition.go 的 ensurePartition
-// （分区名格式必须和这里生成的一致，同 erp-inventory 设计计划 §9 第 8
-// 条的教训：迁移里的初始分区名与这里生成的名字必须共用同一套格式）。
+// （迁移里建的初始分区名必须和这里生成的名字是同一套格式，否则 to_regclass
+// 查不到已有分区，又去建同一段时间范围的分区，撞上"分区范围不许重叠"）。
 //
 // ⚠️ sales_order_items 用**订单头的** created_at 做分区键（列名
-// order_created_at，设计计划 §2、§7 子表跟随主表）——这里两张表用同一套
+// order_created_at，子表跟随主表）——这里两张表用同一套
 // 时间边界一起建，保证子表分区总是和头表分区同步存在。
 package partition
 

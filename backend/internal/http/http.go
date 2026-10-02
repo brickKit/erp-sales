@@ -1,15 +1,14 @@
 // Package http 是 erp-sales 的 REST 面（对外路径前缀 /erp/sales，与
-// assembly.yaml 的 edge_routes 一致）。⚠️ 不暴露 BatchGetOrder/
-// GetOrderStatus——组件间协议，不是人类操作。CalculatePriceDryRun
-// **必须**暴露——前端下单页要实时试算（设计计划 §3、§8.4）。
+// assembly.yaml 的 edge_routes 一致）。不暴露 BatchGetOrder / GetOrderStatus：
+// 那是组件间协议，不是人的操作。CalculatePriceDryRun 必须暴露：前端下单页要
+// 实时试算，前端与 BFF 不许自己算钱。
 //
-// 阶段三 Task 6：权限键从阶段二的 besdk.Public 换成 assembly.yaml 里
-// 声明的真实键。`/price/dry-run` 是"建单前试算"的一部分，归到 create
-// 档——它不读写任何具体订单，纯计算，但语义上属于"准备创建订单"这个
-// 动作，不单独开一个权限键。org+owner 两维数据范围（"本部门及下级"/
-// "我的订单"）另见 scope.go 与 backend/internal/repo/order.go：ListOrders
-// 走 besdk.ScopeOf(ctx) 的 Prefix/Owner 两个字段，CreateOrder 把它们
-// 连同 dept_id 一起写进订单头做创建时快照（设计计划 §1）。
+// 每条路由都带 assembly.yaml 里声明的权限键注册。/price/dry-run 归 create
+// 档：它不读写任何订单，但语义上是"准备建单"的一部分，不单独开一个键。
+// org + owner 两维数据范围（"本部门及下级" / "我的订单"）的过滤在
+// backend/internal/service 与 backend/internal/repo/order.go：都从
+// besdk.ScopeOf(ctx) 取 Prefix / Owner；建单时把它们连同 dept_id 写进订单头，
+// 作为创建时的快照。
 package http
 
 import (
@@ -180,8 +179,8 @@ func parseListInput(c *gin.Context) (repo.ListInput, error) {
 	return in, nil
 }
 
-// listOrdersHandler：?view=mine|dept 决定用 org 维还是 owner 维（设计
-// 计划 §1 的两个视图，见 repo.ListInput 同名字段注释）。省略时默认
+// listOrdersHandler：?view=mine|dept 决定用 org 维还是 owner 维（两个独立的
+// 视图，见 repo.ListInput 同名字段注释）。省略时默认
 // dept——"本部门及下级"是更常见的默认视角（管理者打开列表页通常想看
 // 团队全貌），"我的订单"是窄化的显式选择。
 func listOrdersHandler(svc *service.Service) gin.HandlerFunc {

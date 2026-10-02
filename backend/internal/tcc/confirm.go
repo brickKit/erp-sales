@@ -21,13 +21,12 @@ import (
 // 重复，但派生一个专用键让语义更清楚，也方便日志排障）。
 func reserveIdemKey(idempotencyKey string) string { return idempotencyKey + ":reserve" }
 
-// ConfirmOrder 是本阶段最难的一段代码（设计计划 §3.1）：
+// ConfirmOrder 是本组件最难的一段代码：
 //
 //	① BatchGet 客户            失败 → 直接返回，无需补偿
 //	② BatchGet 产品            失败 → 直接返回，无需补偿
 //	③ 本地缓存校验信用额度      超限 → 直接返回，无需补偿（零网络开销，
-//	                            刻意排在网络调用之前——§3.1 与设计书 §8.2
-//	                            顺序不同的地方，出档时回填 §8.2）
+//	                            刻意排在 Reserve 之前：超额度的单不去占库存）
 //	④ Reserve 库存             失败 → 直接返回；超时 → 见 resolveAfterTimeout
 //	⑤ 落库 + 发事件（同一事务） 失败 → 补偿：CancelReservation
 func (o *Orchestrator) ConfirmOrder(ctx context.Context, orderID, idempotencyKey string, logger *slog.Logger) (*repo.Order, error) {
@@ -53,7 +52,7 @@ func (o *Orchestrator) ConfirmOrder(ctx context.Context, orderID, idempotencyKey
 		return nil, err
 	}
 
-	// ③ 本地信用额度预判（零网络开销，排在 Reserve 之前——设计计划 §3.1）
+	// ③ 本地信用额度预判（零网络开销，排在 Reserve 之前）
 	creditLimit, creditExposure, err := o.Repo.GetCustomerSnapshot(ctx, order.CustomerID)
 	if err != nil {
 		return nil, fmt.Errorf("查信用额度快照失败: %w", err)
@@ -86,7 +85,7 @@ func (o *Orchestrator) ConfirmOrder(ctx context.Context, orderID, idempotencyKey
 	return finalized, nil
 }
 
-// reserve 发起库存预留，超时按 §4.5 的状态内省流程处理，返回真正的
+// reserve 发起库存预留，超时就先查预留状态再决定（resolveAfterTimeout），返回真正的
 // reservation_id（无论是 Reserve 直接返回的，还是超时后按
 // idempotency_key 查出来的）。
 func (o *Orchestrator) reserve(
@@ -110,7 +109,7 @@ func (o *Orchestrator) reserve(
 	}
 
 	// ⚠️ Reserve 超时：响应没收到，不代表请求没被处理——严禁直接调
-	// CancelReservation，必须先 GetReservationStatus（设计计划 §4.5）。
+	// CancelReservation，必须先 GetReservationStatus。
 	logger.Warn("Reserve 超时，转入状态内省", "order_id", orderID, "idempotency_key", idemKey)
 	return o.resolveAfterTimeout(ctx, invConn, orderID, idemKey, logger)
 }
@@ -124,7 +123,7 @@ func (o *Orchestrator) resolveAfterTimeout(
 	resp, err := invConn.GetReservationStatus(statusCtx, &inventoryv1.GetReservationStatusRequest{IdempotencyKey: idemKey})
 	if err != nil {
 		if isDeadlineExceeded(err) {
-			// 查询也超时：写「待对账」表兜底，不阻塞用户请求（§4.5、§9 第 8 条）。
+			// 查询也超时：写「待对账」表兜底，不阻塞用户请求。
 			if qerr := o.Repo.EnqueueReconciliation(ctx, orderID, "", "Reserve 超时且 GetReservationStatus 也超时，idempotency_key="+idemKey); qerr != nil {
 				return "", fmt.Errorf("查询预留状态超时，写对账队列也失败: %w", qerr)
 			}
@@ -135,13 +134,12 @@ func (o *Orchestrator) resolveAfterTimeout(
 
 	switch resp.Status {
 	case inventoryv1.ReservationStatus_RESERVATION_STATUS_RESERVED:
-		// 当作成功，继续⑤（设计计划 §4.5）。
+		// 当作成功，继续⑤。
 		logger.Info("Reserve 超时但已成功提交", "order_id", orderID, "reservation_id", resp.ReservationId)
 		return resp.ReservationId, nil
 	case inventoryv1.ReservationStatus_RESERVATION_STATUS_UNSPECIFIED:
-		// NOT_FOUND：请求根本没到（或没提交），可以安全重试或失败返回——
-		// 阶段二选失败返回，重试交给上游调用方（同 CreateOrder 的幂等键，
-		// 客户端可以带着同一个 idempotency_key 重新调 ConfirmOrder）。
+		// NOT_FOUND：请求根本没到（或没提交），可以安全重试——这里失败返回，
+		// 重试交给调用方：带着同一个 idempotency_key 重新调 ConfirmOrder。
 		return "", fmt.Errorf("%w: Reserve 未提交（NOT_FOUND），可安全重试", errReservePending)
 	case inventoryv1.ReservationStatus_RESERVATION_STATUS_CANCELLED:
 		return "", fmt.Errorf("%w: 预留已被撤销", repo.ErrInvalidArgument)
@@ -214,10 +212,10 @@ func (o *Orchestrator) compensateReserve(
 }
 
 // maybeCreateExceptionTask 把"补偿连续失败 3 次"这件事登记成 infra-workflow
-// 的一条 exception 待办（设计计划 §4.4.4，阶段三 Task 8 落地）。两个独立
-// 的"跳过"开关都合法，不是错误：弱依赖没装配（WorkflowConfigured 为 false，
-// 阶段二默认就是这样）、或者 exceptionAssigneeSub 还没配置（本阶段没有
-// mdm-org，指派给谁需要显式配置，见 tcc.Orchestrator 的字段注释）。
+// 的一条 exception 待办。两个独立的"跳过"开关都合法，不是错误：可选依赖
+// infra/workflow 没装配（WorkflowConfigured 为 false）、或者
+// EXCEPTION_ASSIGNEE_SUB 还没配置（没有组织树可以路由，指派给谁要显式配置，
+// 见 tcc.Orchestrator 的字段注释）。
 func (o *Orchestrator) maybeCreateExceptionTask(ctx context.Context, orderID, idempotencyKey string, logger *slog.Logger) {
 	if !o.Clients.WorkflowConfigured() {
 		logger.Info("infra/workflow 未装配，跳过建异常待办", "order_id", orderID)
@@ -251,7 +249,7 @@ func (o *Orchestrator) maybeCreateExceptionTask(ctx context.Context, orderID, id
 		IdempotencyKey:   idempotencyKey + ":exception-task",
 		Type:             workflowv1.TaskType_TASK_TYPE_EXCEPTION,
 		AssigneeSub:      o.ExceptionAssigneeSub,
-		AssigneeDeptPath: "", // 本阶段没有 mdm-org，留空——站在部门树根节点的人天然看得到全部
+		AssigneeDeptPath: "", // 没有组织树可以路由，留空：派给配置的那个人，不限部门
 		Title:            fmt.Sprintf("订单 %s 补偿连续失败，需要人工介入", orderID),
 		SummaryJson:      string(summaryJSON),
 		SourceComponent:  "erp/sales",

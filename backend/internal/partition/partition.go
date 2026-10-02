@@ -1,5 +1,6 @@
 // Package partition 是 Module.Start 的后台循环之一：为 event_outbox/
-// event_inbox 自动创建未来的周分区（决策 54、§11.5.1）。
+// event_inbox 自动创建未来的周分区（两张表按周分区，过期的整块分区直接
+// 删掉，不逐行 DELETE）。
 //
 // sales_orders/sales_order_items 的月分区维护在 monthly.go——订单是
 // 纯日历滚动窗口（同 erp-inventory 的判据），不像 erp-finance 的会计
@@ -24,7 +25,8 @@ const (
 var weeklyPartitionedTables = []string{"event_outbox", "event_inbox"}
 
 // Start 立刻检查一次，之后每 24 小时检查一次。单次检查失败只记日志，
-// 不让整个循环退出（§13.3 铁律七）。
+// 不让整个循环退出：一次维护失败不该让模块退出、拖垮同一外壳里的成员，
+// 提前建好的 4 周分区留足了下一次重试的时间。
 func Start(ctx context.Context, db *sql.DB, role, schema string, logger *slog.Logger) error {
 	if err := ensureAllWeekly(ctx, db, role, schema); err != nil {
 		logMaintenanceFailure(ctx, logger, "周分区维护失败", err)

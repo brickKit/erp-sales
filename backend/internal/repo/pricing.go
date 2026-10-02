@@ -1,5 +1,5 @@
-// 定价：取 Odoo 的有序规则表模型 + metasfresh 的 price_limit 一等字段
-// （设计计划 §3.2）。一条规则出全部结果（单价+折扣+底价），不做规则
+// 定价：取 Odoo 的有序规则表模型 + metasfresh 的 price_limit 一等字段。
+// 一条规则出全部结果（单价+折扣+底价），不做规则
 // 叠加——"为什么是这个价"永远只有一个答案。
 package repo
 
@@ -33,7 +33,7 @@ type PriceResult struct {
 }
 
 // findPriceTx 按 (适用范围特异度 PRODUCT>CATEGORY>GLOBAL, min_quantity
-// desc, id desc) 排序，第一条命中的赢（设计计划 §3.2）。数量必须达到
+// desc, id desc) 排序，第一条命中的赢。数量必须达到
 // min_quantity 才命中；生效日期区间用 CURRENT_DATE 过滤。
 func findPriceTx(ctx context.Context, tx *sql.Tx, in PriceInput) (*PriceResult, error) {
 	if err := validateQty(in.Qty); err != nil {
@@ -112,8 +112,8 @@ func computeSubtotal(qty, unitPrice, discount string) (string, error) {
 	return decimal.Format2(new(big.Rat).Mul(new(big.Rat).Mul(q, p), rest)), nil
 }
 
-// CalculatePriceDryRun 是纯函数、不落库的试算接口——前端/BFF 严禁自己
-// 算钱（设计计划 §3.2、§8.4）。
+// CalculatePriceDryRun 是纯函数、不落库的试算接口——前端 / BFF 不许自己
+// 算钱，金额只由服务端算。
 func (r *Repo) CalculatePriceDryRun(ctx context.Context, items []PriceInput) ([]*PriceResult, string, error) {
 	var results []*PriceResult
 	total := new(big.Rat)

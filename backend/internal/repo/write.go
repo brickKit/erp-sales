@@ -18,7 +18,7 @@ import (
 	"github.com/brickKit/erp-sales/v2/backend/internal/decimal"
 )
 
-// ── CreateOrder：建 DRAFT，不预留库存（设计计划 §3）。跨组件校验
+// ── CreateOrder：建 DRAFT，不预留库存。跨组件校验
 // （BatchGet 客户/产品）与定价已经由调用方（tcc 包）做完，这里只管落库 ──
 
 type CreateOrderItemInput struct {
@@ -38,8 +38,8 @@ type CreateOrderInput struct {
 	CustomerID     string
 	CustomerName   string // 快照，调用方从 mdm-customer BatchGet 结果里取
 	Items          []CreateOrderItemInput
-	// dept_id/dept_path/owner_id 是创建时快照（设计计划 §1）。阶段三
-	// Task 6：调用方（tcc.CreateOrder）从 besdk.ScopeOf(ctx) 取真实值——
+	// dept_id/dept_path/owner_id 是创建时快照。调用方（tcc.CreateOrder）从
+	// besdk.ScopeOf(ctx) 取真实值（赢单转单时取自事件）——
 	// DeptPath/OwnerID 直接是 scope.Prefix/scope.Owner，DeptID 是
 	// dept_path 末段推出来的叶子部门 id（tcc.leafDeptID）。
 	DeptID   string
@@ -103,8 +103,8 @@ func (r *Repo) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order, er
 			return fmt.Errorf("写 sales_orders: %w", err)
 		}
 
-		// order_no 由 id 派生（"SO" + id），全局唯一，允许有缺口（设计计划
-		// §9 第 3 条）——不需要额外的跨分区唯一约束。
+		// order_no 由 id 派生（"SO" + id），全局唯一，允许有缺口——不需要
+		// 额外的跨分区唯一约束（分区表上的唯一约束必须带分区键）。
 		orderNo := "SO" + strconv.FormatInt(id, 10)
 		if _, err := tx.ExecContext(ctx, `UPDATE sales_orders SET order_no = $1 WHERE id = $2`, orderNo, id); err != nil {
 			return fmt.Errorf("回填 order_no: %w", err)
@@ -136,7 +136,7 @@ func (r *Repo) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order, er
 	return order, nil
 }
 
-// ── FinalizeConfirm：ConfirmOrder 的第⑤步（设计计划 §3.1）。跨组件
+// ── FinalizeConfirm：ConfirmOrder 的第⑤步。跨组件
 // 校验、本地信用额度预判、Reserve 库存全部由 tcc 包在调用这个函数之前
 // 做完并成功——这里只做"锁行重新确认还是 DRAFT → 转 CONFIRMED → 记
 // reservation_id → 发 sales.order.created.v1"，全部在一个事务里 ──
@@ -173,7 +173,7 @@ func (r *Repo) FinalizeConfirm(ctx context.Context, in FinalizeConfirmInput) (*O
 
 		// ⚠️ 重新加锁确认还是 DRAFT：claim-first 只防同一个 idempotency_key
 		// 的并发重复，不防"两个不同 idempotency_key 打到同一个 order_id"
-		// 这种客户端误用——这里再判一次是最后一道防线（设计计划 §3.1）。
+		// 这种客户端误用——这里再判一次是最后一道防线。
 		var status string
 		if err := tx.QueryRowContext(ctx,
 			`SELECT status FROM sales_orders WHERE id = $1 FOR UPDATE`, orderID,
@@ -230,8 +230,8 @@ func buildOrderCreatedPayload(o *Order) ([]byte, error) {
 	})
 }
 
-// ── FinalizeCancel：DRAFT/CONFIRMED → CANCELLED（设计计划 §2.1：
-// CANCELLED 是终态，不能复活）。tcc 包已经在调用这个函数之前把
+// ── FinalizeCancel：DRAFT/CONFIRMED → CANCELLED（CANCELLED 是终态，
+// 不能复活）。tcc 包已经在调用这个函数之前把
 // erp-inventory.CancelReservation（CONFIRMED 的情形才需要）做完 ──
 
 type FinalizeCancelInput struct {
@@ -317,7 +317,7 @@ func (r *Repo) FinalizeCancel(ctx context.Context, in FinalizeCancelInput) (*Ord
 	return order, nil
 }
 
-// ── FinalizeShip：CONFIRMED → SHIPPED（设计计划 §2.1）。tcc 包已经在
+// ── FinalizeShip：CONFIRMED → SHIPPED。tcc 包已经在
 // 调用这个函数之前把 erp-inventory.ConfirmIssue 做完 ──
 
 type FinalizeShipInput struct {
@@ -395,8 +395,8 @@ func (r *Repo) FinalizeShip(ctx context.Context, in FinalizeShipInput) (*Order, 
 	return order, nil
 }
 
-// ── 对账队列：Reserve 超时且 GetReservationStatus 也超时时的兜底
-// （设计计划 §4.5、§9 第 8 条）。不阻塞用户请求，写一行就返回 ──
+// ── 对账队列：Reserve 超时且 GetReservationStatus 也超时时的兜底：预留
+// 状态未知，留给对账处理。不阻塞用户请求，写一行就返回 ──
 
 func (r *Repo) EnqueueReconciliation(ctx context.Context, orderID, reservationID, reason string) error {
 	return besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
