@@ -235,7 +235,7 @@ func (o *Orchestrator) confirmOrderForOpportunity(ctx context.Context, orderID, 
 // createOpportunityExceptionTask 建一条 infra-workflow exception 待办，
 // assignee 用事件里带的 owner_id（商机负责人：转单失败由他来跟进）。
 // 这条待办与 compensateReserve→maybeCreateExceptionTask 那条
-// （补偿连续失败 3 次、assignee 是静态配置的 exceptionAssigneeSub）是
+// （补偿连续失败 3 次、assignee 是静态配置的 EXCEPTION_ASSIGNEE_SUB）是
 // 两条独立的路径：本函数覆盖的是"建单/确认这条自动链路本身失败"（可能
 // 根本没有 Reserve 成功过，比如库存不足直接被拒），不要求补偿失败过。
 func (o *Orchestrator) createOpportunityExceptionTask(ctx context.Context, p OpportunityWonPayload, reason string, logger *slog.Logger) {

@@ -222,7 +222,7 @@ func (o *Orchestrator) maybeCreateExceptionTask(ctx context.Context, orderID, id
 		return
 	}
 	if o.ExceptionAssigneeSub == "" {
-		logger.Warn("exceptionAssigneeSub 未配置，跳过建异常待办", "order_id", orderID)
+		logger.Warn("EXCEPTION_ASSIGNEE_SUB 未配置，跳过建异常待办", "order_id", orderID)
 		return
 	}
 
