@@ -11,17 +11,19 @@ import (
 
 func TestReadConfig_按configSchema的键名读(t *testing.T) {
 	got, err := readConfig(besdk.NewConfig(map[string]string{
-		"DEFAULT_WAREHOUSE_ID": "7", "EXCEPTION_ASSIGNEE_SUB": "u_ops_reviewer", "PG_SCHEMA": "erp_sales_x",
+		"DEFAULT_WAREHOUSE_ID": "7", "EXCEPTION_ASSIGNEE_SUB": "u_ops_reviewer",
+		"PG_SCHEMA": "erp_sales_x", "PG_USER": "sales_app",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := settings{schema: "erp_sales_x", role: "erp_sales_x_rw", defaultWarehouseID: "7", exceptionAssigneeSub: "u_ops_reviewer"}
+	// 角色就是 PG_USER，不从 schema 名推（部署方的角色叫什么都行）。
+	want := settings{schema: "erp_sales_x", role: "sales_app", defaultWarehouseID: "7", exceptionAssigneeSub: "u_ops_reviewer"}
 	if got != want {
 		t.Fatalf("期望 %+v，实际 %+v", want, got)
 	}
 
-	got, err = readConfig(besdk.NewConfig(map[string]string{"DEFAULT_WAREHOUSE_ID": "1"}))
+	got, err = readConfig(besdk.NewConfig(map[string]string{"DEFAULT_WAREHOUSE_ID": "1", "PG_USER": "erp_sales_rw"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,14 +32,14 @@ func TestReadConfig_按configSchema的键名读(t *testing.T) {
 	}
 
 	// 驼峰旧写法不是这些键
-	got, err = readConfig(besdk.NewConfig(map[string]string{"DEFAULT_WAREHOUSE_ID": "1", "exceptionAssigneeSub": "u_old"}))
+	got, err = readConfig(besdk.NewConfig(map[string]string{"DEFAULT_WAREHOUSE_ID": "1", "PG_USER": "u", "exceptionAssigneeSub": "u_old"}))
 	if err != nil || got.exceptionAssigneeSub != "" {
 		t.Fatalf("exceptionAssigneeSub 不是 EXCEPTION_ASSIGNEE_SUB，不该被读到，实际 %+v（%v）", got, err)
 	}
 }
 
 func TestReadConfig_缺默认仓库时返回错误而不是panic(t *testing.T) {
-	for _, vals := range []map[string]string{{}, {"DEFAULT_WAREHOUSE_ID": ""}, {"defaultWarehouseId": "1"}} {
+	for _, vals := range []map[string]string{{"PG_USER": "u"}, {"PG_USER": "u", "DEFAULT_WAREHOUSE_ID": ""}, {"PG_USER": "u", "defaultWarehouseId": "1"}} {
 		func() {
 			defer func() {
 				if p := recover(); p != nil {
@@ -50,3 +52,4 @@ func TestReadConfig_缺默认仓库时返回错误而不是panic(t *testing.T) {
 		}()
 	}
 }
+
