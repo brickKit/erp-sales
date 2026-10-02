@@ -34,6 +34,7 @@ func RegisterRoutes(eng *gin.Engine, svc *service.Service) {
 	besdk.POST(g, "/orders/:id/cancel", "erp.sales.cancel", cancelOrderHandler(svc))
 	besdk.POST(g, "/orders/:id/ship", "erp.sales.ship", shipOrderHandler(svc))
 	besdk.POST(g, "/price/dry-run", "erp.sales.create", calculatePriceDryRunHandler(svc))
+	besdk.GET(g, "/stats/summary", "erp.sales.view", statsSummaryHandler(svc))
 }
 
 const rfc3339 = "2006-01-02T15:04:05.999999999Z07:00"
@@ -238,5 +239,33 @@ func calculatePriceDryRunHandler(svc *service.Service) gin.HandlerFunc {
 			})
 		}
 		c.JSON(http.StatusOK, gin.H{"items": items, "total_amount": total})
+	}
+}
+
+// statsSummaryHandler：GET /stats/summary?period=week|month|quarter&view=dept|mine。
+// 不认识的 period 直接回 400；数据范围与 GET /orders 相同。
+func statsSummaryHandler(svc *service.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		period := c.Query("period")
+		switch period {
+		case "", "week", "month", "quarter":
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("period 只能是 week / month / quarter，实际 %q", period)})
+			return
+		}
+		st, err := svc.StatsSummary(c.Request.Context(), period, c.Query("view") == "mine")
+		if err != nil {
+			_ = c.Error(service.ToStatus(err))
+			return
+		}
+		byDay := make([]gin.H, 0, len(st.ByDay))
+		for _, d := range st.ByDay {
+			byDay = append(byDay, gin.H{"date": d.Date, "order_count": d.OrderCount, "total_amount": d.TotalAmount})
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"period": st.Period, "from": st.From, "to": st.To,
+			"order_count": st.OrderCount, "confirmed_count": st.ConfirmedCount, "total_amount": st.TotalAmount,
+			"by_day": byDay, "by_status": st.ByStatus,
+		})
 	}
 }

@@ -161,6 +161,31 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CalculatePriceDryRunResponse" }
 
+  /stats/summary:
+    get:
+      summary: StatsSummary（仪表盘：窗口期内建的订单数、已确认数与金额，按日、按状态分布）
+      operationId: getSalesStatsSummary
+      description: |
+        只统计调用者数据范围内的订单，范围与 GET /orders 完全一致（view 二选一）。
+        窗口是最近 7 / 30 / 90 个自然日（UTC，含今天），按订单的 created_at 归日。
+        order_count 数窗口内建的全部订单；confirmed_count 与 total_amount 只算
+        已确认（CONFIRMED / SHIPPED / COMPLETED）的订单。
+      parameters:
+        - name: period
+          in: query
+          schema: { type: string, enum: [week, month, quarter], default: month }
+          description: week = 7 天，month = 30 天，quarter = 90 天；其它取值返回 400
+        - name: view
+          in: query
+          schema: { type: string, enum: [dept, mine] }
+          description: 同 GET /orders 的 view。dept（默认）：调用者部门及下级；mine：owner_id 等于调用者
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatsSummary" }
+
 components:
   schemas:
     OrderStatus:
@@ -271,3 +296,28 @@ components:
           type: array
           items: { $ref: "#/components/schemas/PriceDryRunResultItem" }
         total_amount: { type: string }
+
+    StatsDay:
+      type: object
+      properties:
+        date: { type: string, format: date, description: "YYYY-MM-DD（UTC）" }
+        order_count: { type: integer }
+        total_amount: { type: string, description: 当天建的、已确认订单的金额合计（decimal-as-string） }
+
+    StatsSummary:
+      type: object
+      properties:
+        period: { type: string, enum: [week, month, quarter] }
+        from: { type: string, format: date, description: 窗口第一天（含） }
+        to: { type: string, format: date, description: 窗口最后一天（今天，含） }
+        order_count: { type: integer }
+        confirmed_count: { type: integer }
+        total_amount: { type: string, description: 已确认订单的金额合计（decimal-as-string） }
+        by_day:
+          type: array
+          description: 窗口内每一天一项，没有订单的日子也有（0 / "0.00"）
+          items: { $ref: "#/components/schemas/StatsDay" }
+        by_status:
+          type: object
+          description: 全部 7 个状态都列出，没有订单的是 0
+          additionalProperties: { type: integer }

@@ -63,6 +63,7 @@ func newEngine(svc *service.Service, claims besdk.Claims) *gin.Engine {
 	})
 	g := eng.Group("/erp/sales")
 	g.GET("/orders", listOrdersHandler(svc))
+	g.GET("/stats/summary", statsSummaryHandler(svc))
 	return eng
 }
 
@@ -186,5 +187,71 @@ func TestListOrders_REST按来源商机过滤且返回该字段(t *testing.T) {
 	}
 	if len(lb.Orders) != 1 || lb.Orders[0].ID != won.ID || lb.Orders[0].SourceOpportunityID != opp {
 		t.Fatalf("期望只返回订单 %s（source_opportunity_id=%s），不含手工单 %s，实际 %+v", won.ID, opp, manual.ID, lb.Orders)
+	}
+}
+
+type statsBody struct {
+	Period         string         `json:"period"`
+	From           string         `json:"from"`
+	To             string         `json:"to"`
+	OrderCount     int            `json:"order_count"`
+	ConfirmedCount int            `json:"confirmed_count"`
+	TotalAmount    string         `json:"total_amount"`
+	ByStatus       map[string]int `json:"by_status"`
+	ByDay          []struct {
+		Date        string `json:"date"`
+		OrderCount  int    `json:"order_count"`
+		TotalAmount string `json:"total_amount"`
+	} `json:"by_day"`
+}
+
+func getStats(t *testing.T, eng *gin.Engine, q url.Values) (int, statsBody) {
+	t.Helper()
+	code, body := do(t, eng, http.MethodGet, "/erp/sales/stats/summary?"+q.Encode())
+	var sb statsBody
+	if code == http.StatusOK {
+		if err := json.Unmarshal(body, &sb); err != nil {
+			t.Fatalf("响应不是合法 JSON：%v（%s）", err, body)
+		}
+	}
+	return code, sb
+}
+
+// 统计按调用者的数据范围过滤，view 与列表同义：dept（默认）看部门前缀，mine 看 owner。
+// 两个不同范围的用户看到不同的数。
+func TestStatsSummary_REST按调用者范围与view统计(t *testing.T) {
+	r, _ := testRepo(t)
+	deptA := "/" + uniq("stats-a") + "/"
+	deptB := "/" + uniq("stats-b") + "/"
+	ownerA := uniq("u_a")
+	for i := 0; i < 2; i++ {
+		createOrder(t, r, deptA, ownerA)
+	}
+	createOrder(t, r, deptB, uniq("u_b"))
+	createOrder(t, r, deptB, ownerA)
+	svc := testService(r)
+
+	code, a := getStats(t, newEngine(svc, besdk.Claims{Sub: ownerA, DeptPath: deptA}), url.Values{})
+	if code != http.StatusOK || a.Period != "month" || len(a.ByDay) != 30 || a.OrderCount != 2 || len(a.ByStatus) != 7 {
+		t.Fatalf("A 默认（dept、month）应看到本部门 2 单、30 天、7 个状态，实际 code=%d %+v", code, a)
+	}
+	if a.ByStatus["DRAFT"] != 2 || a.ConfirmedCount != 0 || a.TotalAmount != "0.00" {
+		t.Fatalf("A 的 2 单都是草稿：期望 DRAFT=2、confirmed_count=0、total_amount=0.00，实际 %+v", a)
+	}
+	_, b := getStats(t, newEngine(svc, besdk.Claims{Sub: uniq("u_other"), DeptPath: deptB}), url.Values{})
+	if b.OrderCount != 2 {
+		t.Fatalf("B 部门的人应只看到 B 部门的 2 单，实际 %d", b.OrderCount)
+	}
+	_, mine := getStats(t, newEngine(svc, besdk.Claims{Sub: ownerA, DeptPath: deptA}), url.Values{"view": {"mine"}, "period": {"week"}})
+	if mine.OrderCount != 3 || mine.Period != "week" || len(mine.ByDay) != 7 {
+		t.Fatalf("A 用 view=mine、period=week 应看到自己名下 3 单（含 B 部门那单）、7 天，实际 %+v", mine)
+	}
+}
+
+func TestStatsSummary_REST不认识的period返回400(t *testing.T) {
+	r, _ := testRepo(t)
+	eng := newEngine(testService(r), besdk.Claims{Sub: "u_viewer", DeptPath: "/1/"})
+	if code, _ := getStats(t, eng, url.Values{"period": {"year"}}); code != http.StatusBadRequest {
+		t.Fatalf("period=year 应返回 400，实际 %d", code)
 	}
 }

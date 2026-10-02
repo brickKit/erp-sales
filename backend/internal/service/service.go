@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	besdk "github.com/brickKit/be-sdk-go"
 	"github.com/brickKit/erp-sales/v2/backend/internal/repo"
@@ -165,6 +166,19 @@ func (s *Service) ListOrders(ctx context.Context, in repo.ListInput) (*repo.List
 		in.ScopePrefix = scope.Prefix
 	}
 	return s.repo.ListOrders(ctx, in)
+}
+
+// StatsSummary 是仪表盘统计：数据范围从 ctx 取，与 ListOrders 完全一致
+// （viewMine 为 true 时按 owner，否则按部门前缀）。
+func (s *Service) StatsSummary(ctx context.Context, period string, viewMine bool) (*repo.Stats, error) {
+	scope := besdk.ScopeOf(ctx)
+	in := repo.StatsInput{Period: period, Now: time.Now(), ViewMine: viewMine}
+	if viewMine {
+		in.ScopeOwner = scope.Owner
+	} else {
+		in.ScopePrefix = scope.Prefix
+	}
+	return s.repo.StatsSummary(ctx, in)
 }
 
 func (s *Service) BatchGetOrder(ctx context.Context, ids []string) (found []*repo.Order, missing []string, err error) {
