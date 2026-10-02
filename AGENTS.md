@@ -2,27 +2,101 @@
 
 # erp/sales
 
-The AI guide to developing this component. How to use it, its boundaries and contracts: BRICKKIT.md. Dependencies, configuration and deployment: component.yaml.
+The AI guide to developing this component. How to use it, its boundaries and contracts: BRICKKIT.md. Why it is shaped this way: `docs/design.md`. Dependencies, configuration and deployment: component.yaml.
 
 ## Code map
 
-<!-- TODO: two tables — "Path / Owns" (paths in backticks, directories ending in /) and "Feature / Start here / Then"; brickkit lint checks every path exists -->
+| Path | Owns |
+|---|---|
+| `backend/module/module.go` | The only entry, `New(ctx, rt)`: reads the configuration (`readConfig`), builds repo → orchestrator → service → HTTP + gRPC, starts the outbox pump, the two partition loops and the consumers. Same function standalone and in a shell |
+| `backend/cmd/server/main.go` | One line, `besdk.RunStandalone(module.New)` |
+| `backend/cmd/migrate/main.go` | One line, `migrate.Main(migrations.FS)`: the migration container's entry (`./migrate up`) |
+| `backend/internal/tcc/` | The cross-component orchestration: `confirm.go` (reserve, status after a timeout, compensation, suspension and exception task), `create.go`, `cancel.go`, `ship.go`, `opportunity_won.go` (won opportunity → confirmed order, system identity), `loglevel.go` (`FailureLevel`) |
+| `backend/internal/client/client.go` | Dialing the five dependencies: `Customer`, `Product`, `Inventory`, `Finance`, `Workflow` forward the caller's token; the `*System` variants are for event handlers only |
+| `backend/internal/repo/write.go` | Local writes: `CreateOrder` and the `Finalize*` steps; each runs idempotency claim → state check under row lock → write → outbox in one transaction |
+| `backend/internal/repo/order.go` | Order types and statuses, `GetOrder`, `ListOrders` (scope, filters, keyset paging), `BatchGetOrder`, `GetOrderStatus` |
+| `backend/internal/repo/pricing.go` | `validateQty`, the price rule lookup `findPriceTx`, `CalculatePriceDryRun` |
+| `backend/internal/repo/stats.go` | `StatsSummary` for `GET /stats/summary` |
+| `backend/internal/repo/snapshot.go` | The customer credit limit copy (`UpsertCustomerSnapshotCreditLimitTx`, `GetCustomerSnapshotTx`) |
+| `backend/internal/repo/suspend.go` | `SuspendOrderTx`, the compensation failure counter, `ResumeFromExceptionTx` |
+| `backend/internal/repo/repo.go` | Sentinel errors, `Order.InScope`, `parseID` |
+| `backend/internal/decimal/decimal.go` | Exact decimal arithmetic on strings (big.Rat from the standard library), rounding half away from zero to cents |
+| `backend/internal/consumer/consumer.go` | The five consumed subjects and their handlers |
+| `backend/internal/service/` | Input checks, the data scope on single-order commands, logging by `tcc.FailureLevel`, the error → gRPC status mapping (`status.go`) |
+| `backend/internal/http/http.go` | REST routes, each registered with its permission key; `parseListInput`, `statsSummaryHandler` |
+| `backend/internal/grpc/grpc.go` | `erp.sales.v1.SalesService` |
+| `backend/internal/partition/` | Background loops: weekly partitions of `event_outbox` / `event_inbox` four weeks ahead, monthly partitions of `sales_orders` / `sales_order_items` three months ahead |
+| `migrations/` | SQL migrations, embedded by `migrations/embed.go` |
+| `contracts/` | proto, OpenAPI, event schema |
+| `gen/erp/sales/` | Generated Go code: a nested Go module, tagged on its own as gen/erp/sales/v1.x.y; never edited by hand |
+| `scripts/` | `seed.sh` / `seed-clean.sh` for local demo data |
+
+| Feature | Start here | Then |
+|---|---|---|
+| A step of order confirmation, a timeout, the compensation | `backend/internal/tcc/confirm.go` | `backend/internal/tcc/compensate_test.go`, `backend/internal/tcc/confirm_test.go` (real dependencies) |
+| Won opportunity → order | `backend/internal/tcc/opportunity_won.go` | `backend/internal/consumer/consumer.go` (`opportunityWonHandler`), `backend/internal/tcc/opportunity_source_test.go` |
+| Price rules, quantity checks | `backend/internal/repo/pricing.go` | `backend/internal/repo/qty_test.go`, `backend/internal/repo/money_test.go` |
+| A new list filter or query parameter | `backend/internal/http/http.go` (`parseListInput`) | `backend/internal/repo/order.go` (`ListOrders`), `contracts/` (append only) |
+| The dashboard numbers | `backend/internal/repo/stats.go` | `backend/internal/repo/stats_test.go`, `backend/internal/http/http_test.go` |
+| A new field on the order | `migrations/` (a new migration) | `contracts/` (append only), `buf generate`, `backend/internal/repo/order.go` |
+| A consumed event | `backend/internal/consumer/consumer.go` | the producer's event contract (copy fields, never import) |
+| An error answering with the wrong status, or logged at the wrong level | `backend/internal/service/status.go` | `backend/internal/tcc/loglevel.go` |
 
 ## Build and test
 
-<!-- TODO: the exact commands to build, test, run locally and check the contract, and what success looks like -->
+```bash
+# tests run against the test database brickkit_test_db, never brickkit_db (make test-db-init at the project root)
+set -a; . ../../../.env; set +a
+export TEST_PG_DSN="postgres://postgres:${POSTGRES_PASSWORD}@localhost:5432/brickkit_test_db?sslmode=disable"
+make test                    # every package ends in "ok"; refuses to run without TEST_PG_DSN
+go test ./... -count=1 -v | grep -- '--- SKIP'   # only the tests that need real dependencies (11, see below)
+make check-version dag-check contract-check import-scan module-check   # each prints one ✓ line
+make docs-check              # "0 with errors, 0 warnings"
+# migrations, as the login role:
+PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw \
+  PG_PASSWORD="$ERP_SALES_DB_PASSWORD" PG_SCHEMA=erp_sales make migrate-idempotent   # ✓ 迁移幂等
+```
+
+The skipped tests (in `backend/internal/tcc/confirm_test.go`, `backend/internal/tcc/opportunity_won_test.go`, `backend/internal/consumer/opportunity_won_dlq_test.go`) drive real `mdm/customer`, `mdm/product`, `erp/inventory` and `infra/workflow` containers: real insufficient stock, real timeouts. They run from the project root with `make test-cross ID=erp/sales`, which injects the dependency addresses. After `buf generate` (contracts changed), the contract package needs a new tag: see Pitfalls. On a real machine, from the project root: `make verify ID=erp/sales ROUTE=/erp/sales/orders FOCUS=1` builds the image, starts this component with its dependencies, checks migration, health and the permission check, runs a focus run, and tears down.
 
 ## Design decisions
 
-<!-- TODO: why it does not depend on some other component; alternatives rejected and why — longer reasoning goes in docs/ and is linked here -->
+- **Confirmation is a TCC chain**, local checks first: customer, products, credit limit (local copy, before any reservation), then `Reserve`, then the local confirmation with the event in one transaction; only a failure after `Reserve` is compensated.
+- **A `Reserve` timeout is never answered with `CancelReservation`**: the reservation state is asked first (`GetReservationStatus`); unknown even then → a row in `sales_order_reconciliation_queue`, `503` to the caller.
+- **Compensation retries in place, three times**, under the same idempotency key and without the caller's cancellation; the third failure suspends the order and opens an exception task.
+- **Not enough stock fails the whole order**; there is no partial reservation.
+- **`sales.order.created.v1` is published on confirmation**, not on creation: a draft must not produce a receivable.
+- **Order lines are snapshots** (SKU, name, unit, price); nothing joins the master data later.
+- **Two data-scope views, chosen by `view`**: `dept` (department prefix) or `mine` (owner), never ANDed; single-order reads and commands accept either.
+- **Money and quantities are decimal strings** end to end, computed with `math/big.Rat` and rounded once, half away from zero, to cents.
+- **A won opportunity becomes an order through the event only** (system identity, ownership taken from the event); failures become an exception task for the opportunity's owner, never an event back to CRM.
 
 ## Pitfalls
 
-<!-- TODO: a table: Never / Symptom / Why — only what is specific to this component; project-wide rules stay in the project's AGENTS.md -->
+| Never | Symptom | Why |
+|---|---|---|
+| Call `CancelReservation` right after a `Reserve` timeout | Stock that was reserved is released while the order goes on, or a failed reservation is treated as success; the numbers drift with no error | A missing response does not mean the request was not processed; `resolveAfterTimeout` asks first |
+| Check the credit limit after `Reserve` | An order clearly over its limit first takes stock, then is rejected and compensated | The local check is free; it runs before any reservation |
+| Use the `*System` clients on a request path, or the plain clients in an event handler | Request path: the response silently contains rows the user may not see. Event handler: the call goes out with no token | `UserClient` forwards the caller; event handlers have no caller (`make gates` runs `system-client-scan`) |
+| Reuse `CreateOrder` / `ConfirmOrder` for the won-opportunity path | `besdk.ScopeOf` panics in the event handler: there are no claims | `createOrderForOpportunity` / `confirmOrderForOpportunity` take ownership from the event |
+| Return an error from `opportunityWonHandler` expecting a redelivery | The won event is never seen again | `besdk.Consume` uses core NATS: a handler error is logged, not redelivered |
+| Resume a suspended order on `status == SUSPENDED` alone | An order suspended by finance's credit rejection is put back to `DRAFT` by an unrelated task completion | `ResumeFromExceptionTx` matches `suspended_reason` exactly |
+| Handle every `infra.workflow.task.completed.v1` | Another component's task ID is taken for an order ID | The subject is shared by all components; filter on `source_component` / `source_aggregate` |
+| Parse an amount or quantity with `strconv.ParseFloat`, or store a value without checking it | `"NaN"` lands in a `NUMERIC` column and outranks every number, so `CHECK (qty > 0)` and every comparison let it through; `0.1 + 0.2` rounds to the wrong cent | `validateQty` and `creditLimitPattern` accept plain decimals only; arithmetic goes through `backend/internal/decimal` |
+| Log a caller's error at ERROR | Every rejected draft or out-of-stock order pages someone | `tcc.FailureLevel`: 4xx → INFO, transient → WARN, the rest → ERROR |
+| Partition `sales_order_items` by its own time | Items of one order land in different partitions from their header | They are partitioned by the header's `created_at` (`order_created_at`) |
+| Change a comment or option in `contracts/erp/sales/v1/sales.proto` without tagging the contract package | Builds pass locally (the `replace` hides it); a shell fetching `erp-sales/v2` compiles against the old `gen/` | Any change under `gen/erp/sales/` needs a new tag gen/erp/sales/v1.x.y and the root `go.mod` requiring it |
 
 ## Before changing code
 
-<!-- TODO: 3 to 8 checks to run before changing code here -->
+1. Is this about the order (here), the stock (`erp/inventory`), the money owed (`erp/finance`) or the opportunity (`crm/opportunity`)? Only the first goes here.
+2. Does the change add a call between CRM and ERP? Stop: only events cross that line.
+3. In the confirmation chain, what happens if this new step times out, and is a reservation already held at that point?
+4. Request path or event handler? That decides `UserClient` or `SystemClient`, and whether `besdk.ScopeOf` is available.
+5. Any new decimal input: strict pattern, sign and size checked before it reaches SQL; a red test with `NaN` first.
+6. Contract change? Append only. Did `gen/` change? Then the contract package needs a new tag and `go.mod` must require it.
+7. A new REST route is registered with `besdk.GET` / `POST` and a permission key from `assembly.yaml`; a new list or stats endpoint filters by the same scope as `GET /orders` and has a two-users test on a real database.
+8. Bump `metadata.version` before the first change after a release; update BRICKKIT.md and `docs/design.md` in the same commit as the code.
 
 <!-- brickkit:managed:begin lang=en -->
 <!-- maintained by brickkit (init, add, remove, upgrade, skills update): edits between these markers are overwritten -->
