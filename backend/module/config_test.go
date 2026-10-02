@@ -53,3 +53,19 @@ func TestReadConfig_缺默认仓库时返回错误而不是panic(t *testing.T) {
 	}
 }
 
+// PG_USER 是每个事务切过去的角色，必填；它与 PG_SCHEMA 都要原样拼进
+// SET LOCAL ROLE / search_path，名字不合法时 New 就失败、说清是哪个键，
+// 不等到第一个请求才在每个事务里报错。
+func TestReadConfig_PG_USER与PG_SCHEMA缺失或不合法时返回错误(t *testing.T) {
+	for _, vals := range []map[string]string{
+		{"DEFAULT_WAREHOUSE_ID": "1"},
+		{"DEFAULT_WAREHOUSE_ID": "1", "PG_USER": ""},
+		{"DEFAULT_WAREHOUSE_ID": "1", "PG_USER": "Sales-App"},
+		{"DEFAULT_WAREHOUSE_ID": "1", "PG_USER": "u", "PG_SCHEMA": "erp.sales"},
+		{"DEFAULT_WAREHOUSE_ID": "1", "PG_USER": "u", "PG_SCHEMA": ""},
+	} {
+		if got, err := readConfig(besdk.NewConfig(vals)); err == nil {
+			t.Errorf("%v：应返回 error，实际 %+v", vals, got)
+		}
+	}
+}
