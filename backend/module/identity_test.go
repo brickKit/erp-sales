@@ -289,3 +289,53 @@ func (fakeProducts) BatchGet(_ context.Context, req *productv1.BatchGetRequest) 
 	}
 	return out, nil
 }
+
+// 新库迁移完、还没等后台分区维护跑第一轮，就要能写入：迁移里写死的初始分区
+// 只覆盖写迁移那几周（2026-09 起），哪天在一个新库上装本组件，当周 / 当月的
+// 分区就不在了，维护任务第一轮跑完之前的写入会报 no partition of relation。
+// 所以迁移跑完那一刻，四张分区表都要有当前周期和下一个周期的分区（再往后由
+// 维护任务提前建）。
+func TestMigrate_新schema迁移完就有当前与下一个周期的分区(t *testing.T) {
+	adminDSN := os.Getenv("TEST_PG_DSN")
+	if adminDSN == "" {
+		t.Skip("未设置 TEST_PG_DSN")
+	}
+	ctx := context.Background()
+	id := newDBIdentity(t, adminDSN)
+	if err := migrate.Run(ctx, id.pgEnv(id.role), []string{"up"}, migrations.FS); err != nil {
+		t.Fatalf("迁移失败：%v", err)
+	}
+
+	now := time.Now().UTC()
+	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	wd := int(now.Weekday())
+	if wd == 0 {
+		wd = 7
+	}
+	week := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(wd - 1))
+
+	var want []string
+	for _, from := range []time.Time{month, month.AddDate(0, 1, 0)} {
+		for _, table := range []string{"sales_orders", "sales_order_items"} {
+			want = append(want, table+"_"+from.Format("2006_01_02"))
+		}
+	}
+	for _, from := range []time.Time{week, week.AddDate(0, 0, 7)} {
+		for _, table := range []string{"event_outbox", "event_inbox"} {
+			want = append(want, table+"_"+from.Format("2006_01_02"))
+		}
+	}
+	var missing []string
+	for _, name := range want {
+		var exists bool
+		if err := id.admin.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, id.schema+"."+name).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		t.Fatalf("迁移完缺这些分区（今天 %s）：%v", now.Format("2006-01-02"), missing)
+	}
+}
