@@ -496,14 +496,13 @@ func TestResolveAfterTimeout_查询也超时时写入对账队列(t *testing.T) 
 	}
 }
 
-// TestCompensateReserve_真实释放预留且累加补偿计数 是 TCC 补偿动作
+// TestCompensateReserve_真实释放预留且不计失败次数 是 TCC 补偿动作
 // 本身的直接测试：④ Reserve 真的成功之后，模拟⑤本地落库失败，断言
 // compensateReserve 真的调用 erp-inventory.CancelReservation 把库存
-// 释放回去（查依赖组件的真实余额，不是订单侧自己说了算），并且真的
-// 在 sales_orders.compensation_attempts 上累加了计数（设计计划 §3.1、
-// §4.4.4：补偿连续失败 3 次才转 SUSPENDED，这里只验证单次补偿成功时
-// 计数确实从 0 变成 1）。
-func TestCompensateReserve_真实释放预留且累加补偿计数(t *testing.T) {
+// 释放回去（查依赖组件的真实余额，不是订单侧自己说了算）。
+// compensation_attempts 记的是补偿**失败**的次数（连续失败 3 次才转
+// SUSPENDED），这次补偿成功了，计数保持 0。
+func TestCompensateReserve_真实释放预留且不计失败次数(t *testing.T) {
 	requireE2EEnv(t)
 	db := testDB(t)
 	rdb := realDB(t)
@@ -553,13 +552,13 @@ func TestCompensateReserve_真实释放预留且累加补偿计数(t *testing.T)
 		t.Fatalf("补偿后 reserved_qty 应该回到补偿前的水平，期望 %v，实际 %v", beforeReserved, afterReserved)
 	}
 
-	// 断言 compensation_attempts 真的累加了。
+	// 补偿成功不算失败：compensation_attempts 保持 0。
 	reloaded, err := r.GetOrder(ctx, order.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.CompensationAttempts != 1 {
-		t.Fatalf("期望 compensation_attempts=1，实际 %d", reloaded.CompensationAttempts)
+	if reloaded.CompensationAttempts != 0 {
+		t.Fatalf("补偿成功不该计入失败次数，期望 compensation_attempts=0，实际 %d", reloaded.CompensationAttempts)
 	}
 }
 
