@@ -7,6 +7,7 @@ package module
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"time"
 
 	besdk "github.com/brickKit/be-sdk-go"
@@ -89,6 +90,13 @@ type settings struct {
 // 配置只从 rt.Config 读，不碰 os.Getenv：一个进程只有一份环境，进外壳后各成员
 // 的 PG_SCHEMA 会互相覆盖，不报错，模块就按别人的 schema 读写数据。
 //
+// 库身份全部来自配置：PG_SCHEMA 是 schema，PG_USER 是每个事务 SET LOCAL ROLE
+// 切过去的角色。独立运行时 PG_USER 就是登录角色；进外壳后外壳以自己的角色登录，
+// 每个成员靠这一步切到它自己配置里的 PG_USER。角色名不从 schema 名推：部署方的
+// 角色叫什么都行，只要它对这个 schema 有 USAGE+CREATE、跑过本组件的迁移。两个
+// 名字都要原样拼进 SQL（besdk.WithTx 只收小写字母开头、小写字母数字下划线），
+// 不合法就在这里失败、点名是哪个键，不等到第一个请求才在每个事务里报错。
+//
 // DEFAULT_WAREHOUSE_ID 必填：没有多仓选货逻辑，确认订单时统一向这一个仓库发起
 // 预留。缺了（或是空串）返回 error 让 New 失败，不 panic——进了外壳，一个成员
 // panic 会让同一外壳里的成员全跟着退出。
@@ -97,15 +105,23 @@ type settings struct {
 // 连续失败只记日志、不开异常待办，补偿本身照常进行。
 func readConfig(c besdk.Config) (settings, error) {
 	schema := c.StringOr("PG_SCHEMA", "erp_sales")
+	if !identRe.MatchString(schema) {
+		return settings{}, fmt.Errorf("配置 PG_SCHEMA %q 不是合法的 schema 名（小写字母开头，只含小写字母、数字、下划线）", schema)
+	}
+	role, _ := c.String("PG_USER")
+	if !identRe.MatchString(role) {
+		return settings{}, fmt.Errorf("配置 PG_USER %q 不是合法的角色名（必填；小写字母开头，只含小写字母、数字、下划线）：每个事务都切到这个角色", role)
+	}
 	warehouse, _ := c.String("DEFAULT_WAREHOUSE_ID")
 	if warehouse == "" {
 		return settings{}, fmt.Errorf("必填配置 DEFAULT_WAREHOUSE_ID 没有值：确认订单时要向这个仓库预留库存")
 	}
 	return settings{
-		// role 是每个事务里 SET LOCAL ROLE 的目标：独立运行时它就是登录角色；
-		// 进外壳后外壳以自己的角色登录，靠这一步切到本组件的角色。
-		schema: schema, role: schema + "_rw",
+		schema: schema, role: role,
 		defaultWarehouseID:   warehouse,
 		exceptionAssigneeSub: c.StringOr("EXCEPTION_ASSIGNEE_SUB", ""),
 	}, nil
 }
+
+// identRe 与 besdk.WithTx 对 role / schema 名的要求一致。
+var identRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
