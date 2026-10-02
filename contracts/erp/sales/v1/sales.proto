@@ -72,7 +72,7 @@ message OrderItem {
 // 不是运行时查"这个人现在在哪个部门"：销售换部门后，他以前的订单不跟着走。
 message Order {
   string   id              = 1;
-  string   order_no        = 2; // 由 id 派生，允许有缺口（草稿单作废会留洞）
+  string   order_no        = 2; // 由 id 派生（"SO" + id），允许有缺口（插入回滚时序列号不回退）
   string   customer_id     = 3;
   string   customer_name   = 4; // 快照
   OrderStatus status        = 5;

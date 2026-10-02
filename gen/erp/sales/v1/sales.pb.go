@@ -208,7 +208,7 @@ func (x *OrderItem) GetSubtotal() string {
 type Order struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	Id           string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	OrderNo      string                 `protobuf:"bytes,2,opt,name=order_no,json=orderNo,proto3" json:"order_no,omitempty"` // 由 id 派生，允许有缺口（草稿单作废会留洞）
+	OrderNo      string                 `protobuf:"bytes,2,opt,name=order_no,json=orderNo,proto3" json:"order_no,omitempty"` // 由 id 派生（"SO" + id），允许有缺口（插入回滚时序列号不回退）
 	CustomerId   string                 `protobuf:"bytes,3,opt,name=customer_id,json=customerId,proto3" json:"customer_id,omitempty"`
 	CustomerName string                 `protobuf:"bytes,4,opt,name=customer_name,json=customerName,proto3" json:"customer_name,omitempty"` // 快照
 	Status       OrderStatus            `protobuf:"varint,5,opt,name=status,proto3,enum=erp.sales.v1.OrderStatus" json:"status,omitempty"`
