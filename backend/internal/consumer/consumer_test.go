@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"testing"
@@ -98,7 +99,7 @@ func TestConsumer_权威额度超限转SUSPENDED(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		_ = besdk.Consume(ctx, nc, db, "erp_sales_rw", "erp_sales", subj,
-			creditRejectedHandler())
+			creditRejectedHandler(noWorkflowOrchestrator(r), slog.Default()))
 		close(done)
 	}()
 	time.Sleep(150 * time.Millisecond)

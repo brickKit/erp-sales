@@ -30,7 +30,7 @@ func Start(ctx context.Context, db *sql.DB, role, schema string, nc *nats.Conn, 
 		subject string
 		handle  func(context.Context, *sql.Tx, besdk.Event) error
 	}{
-		{"finance.credit.rejected.v1", creditRejectedHandler()},
+		{"finance.credit.rejected.v1", creditRejectedHandler(orch, logger)},
 		{"mdm.customer.created.v1", customerSnapshotHandler()},
 		{"mdm.customer.updated.v1", customerSnapshotHandler()},
 		{"infra.workflow.task.completed.v1", workflowTaskCompletedHandler()},
@@ -62,7 +62,7 @@ type creditRejectedPayload struct {
 	Limit      string `json:"limit"`
 }
 
-func creditRejectedHandler() func(context.Context, *sql.Tx, besdk.Event) error {
+func creditRejectedHandler(_ *tcc.Orchestrator, _ *slog.Logger) func(context.Context, *sql.Tx, besdk.Event) error {
 	return func(ctx context.Context, tx *sql.Tx, ev besdk.Event) error {
 		var p creditRejectedPayload
 		if err := json.Unmarshal(ev.Payload, &p); err != nil {
