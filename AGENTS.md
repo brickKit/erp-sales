@@ -46,15 +46,15 @@ The AI guide to developing this component. How to use it, its boundaries and con
 
 ```bash
 # tests run against the test database brickkit_test_db, never brickkit_db (make test-db-init at the project root)
-set -a; . ../../../.env; set +a
-export TEST_PG_DSN="postgres://postgres:${POSTGRES_PASSWORD}@localhost:5432/brickkit_test_db?sslmode=disable"
+# the password is POSTGRES_PASSWORD in the project's .env; don't source .env (Compose syntax, multi-line PEM)
+export TEST_PG_DSN="postgres://postgres:<password>@localhost:5432/brickkit_test_db?sslmode=disable"
 make test                    # every package ends in "ok"; refuses to run without TEST_PG_DSN
 go test ./... -count=1 -v | grep -- '--- SKIP'   # only the tests that need real dependencies (14, see below)
 make check-version dag-check contract-check import-scan module-check   # each prints one ✓ line
 make docs-check              # "0 with errors, 0 warnings"
-# migrations, as the login role (this project's: erp_sales_rw):
+# migrations, as the login role (this project's: erp_sales_rw; its password is ERP_SALES_DB_PASSWORD in .env):
 PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw \
-  PG_PASSWORD="$ERP_SALES_DB_PASSWORD" PG_SCHEMA=erp_sales make migrate-idempotent   # ✓ 迁移幂等
+  PG_PASSWORD='<password>' PG_SCHEMA=erp_sales make migrate-idempotent   # ✓ 迁移幂等
 ```
 
 The skipped tests (in `backend/internal/tcc/confirm_test.go`, `backend/internal/tcc/opportunity_won_test.go`, `backend/internal/tcc/snapshot_refresh_test.go`, `backend/internal/consumer/opportunity_won_dlq_test.go`) drive real `mdm/customer`, `mdm/product`, `erp/inventory` and `infra/workflow` containers: real insufficient stock, real timeouts. They run from the project root with `make test-cross ID=erp/sales`, which injects the dependency addresses. After `buf generate` (contracts changed), the contract package needs a new tag: see Pitfalls. On a real machine, from the project root: `make verify ID=erp/sales ROUTE=/erp/sales/orders FOCUS=1` builds the image, starts this component with its dependencies, checks migration, health and the permission check, runs a focus run, and tears down.

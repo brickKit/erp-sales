@@ -46,15 +46,15 @@
 
 ```bash
 # 测试连测试库 brickkit_test_db，绝不连 brickkit_db（项目根 make test-db-init 准备）
-set -a; . ../../../.env; set +a
-export TEST_PG_DSN="postgres://postgres:${POSTGRES_PASSWORD}@localhost:5432/brickkit_test_db?sslmode=disable"
+# 密码是项目 .env 里的 POSTGRES_PASSWORD；不要 source .env（Compose 语法，含多行 PEM）
+export TEST_PG_DSN="postgres://postgres:<密码>@localhost:5432/brickkit_test_db?sslmode=disable"
 make test                    # 每个包都是 "ok"；没设 TEST_PG_DSN 直接失败
 go test ./... -count=1 -v | grep -- '--- SKIP'   # 只有需要真实依赖的测试（14 条，见下文）
 make check-version dag-check contract-check import-scan module-check   # 每个打印一行 ✓
 make docs-check              # "0 with errors, 0 warnings"
-# 迁移，以登录角色运行（本项目是 erp_sales_rw）：
+# 迁移，以登录角色运行（本项目是 erp_sales_rw；它的密码是 .env 里的 ERP_SALES_DB_PASSWORD）：
 PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw \
-  PG_PASSWORD="$ERP_SALES_DB_PASSWORD" PG_SCHEMA=erp_sales make migrate-idempotent   # ✓ 迁移幂等
+  PG_PASSWORD='<密码>' PG_SCHEMA=erp_sales make migrate-idempotent   # ✓ 迁移幂等
 ```
 
 被跳过的测试（在 `backend/internal/tcc/confirm_test.go`、`backend/internal/tcc/opportunity_won_test.go`、`backend/internal/tcc/snapshot_refresh_test.go`、`backend/internal/consumer/opportunity_won_dlq_test.go` 里）驱动真实的 `mdm/customer`、`mdm/product`、`erp/inventory` 与 `infra/workflow` 容器：真的库存不足、真的超时。在项目根用 `make test-cross ID=erp/sales` 跑，它会注入依赖地址。`buf generate` 之后（契约变了），契约包要打新 tag：见易错点。真机在项目根跑 `make verify ID=erp/sales ROUTE=/erp/sales/orders FOCUS=1`：构建镜像、连同依赖起本组件、核对迁移 / 健康 / 权限判定、跑一次 focus、收尾。
