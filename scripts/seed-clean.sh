@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-# 撤销 seed.sh 灌的数据。反查 command_idempotency 表拿真实行 id 再精确
-# 删除，不靠名字/客户模糊匹配（同 mdm-customer/crm-opportunity 的既有
-# 样板）。
+# 撤销 seed.sh 灌的订单：按种子用的 idempotency_key 反查 command_idempotency 拿到真实
+# 订单 id 再精确删除，不按名字或客户模糊匹配。
 #
-# ⚠️ 不清理 crm-opportunity 的 WON 商机联带自动建的订单——那批订单归
-# crm-opportunity 自己的 seed-clean.sh 管（它知道自己种了哪几个 WON
-# 商机，反查 crm-won:<opportunity_id> 更精确），本脚本只清自己
-# seed-order-* 这几条。
+# 商机赢单自动转成的订单不在这里删：它们归 crm/opportunity 的 seed-clean（那边知道
+# 自己种了哪几个赢单商机，按 crm-won:<opportunity_id> 反查更精确）。
 set -euo pipefail
 C_GRN=$'\033[32m'; C_OFF=$'\033[0m'
 ok() { echo "${C_GRN}✓${C_OFF} $*"; }
@@ -38,4 +35,4 @@ BEGIN
 END $$;
 SQL
 
-ok "erp-sales 种子订单已清空（crm-opportunity 联带的订单不受影响，归它自己管）"
+ok "erp-sales 种子订单已清空（赢单自动转成的订单不受影响，归 crm/opportunity 管）"
