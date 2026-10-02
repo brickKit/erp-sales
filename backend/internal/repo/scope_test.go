@@ -20,7 +20,13 @@ func TestOrder_InScope(t *testing.T) {
 		{"部门前缀命中下级", "/1/12/34/", "u_zhangsan", "/1/12/", "u_someone_else", true},
 		{"owner精确命中", "/1/99/", "u_zhangsan", "/1/12/", "u_zhangsan", true},
 		{"两个都不命中", "/1/99/", "u_zhangsan", "/1/12/", "u_someone_else", false},
-		{"根节点前缀天然命中全部", "/1/99/", "u_zhangsan", "", "u_someone_else", true},
+		// 空前缀只能是调用方漏填了（SDK 保证 Prefix 不为空串）：org 一侧不命中，只剩 owner。
+		{"空前缀org一侧不命中", "/1/99/", "u_zhangsan", "", "u_someone_else", false},
+		{"空前缀不命中dept_path为空的单", "", "u_zhangsan", "", "u_someone_else", false},
+		{"空前缀owner仍命中", "/1/99/", "u_zhangsan", "", "u_zhangsan", true},
+		// "/" 是整棵部门树的显式根标记：命中所有带部门的单，不命中 dept_path 为空的单。
+		{"根标记斜杠命中有部门的单", "/1/99/", "u_zhangsan", "/", "u_someone_else", true},
+		{"根标记斜杠不命中dept_path为空的单", "", "u_zhangsan", "/", "u_someone_else", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
