@@ -4,7 +4,6 @@ go 1.25.11
 
 require (
 	github.com/brickKit/be-sdk-go v0.5.0
-	github.com/brickKit/erp-finance/gen/erp/finance v1.0.10
 	github.com/brickKit/erp-inventory/gen/erp/inventory v1.0.14
 	github.com/brickKit/infra-workflow/gen/infra/workflow v1.0.3
 	github.com/brickKit/mdm-customer/gen/mdm/customer v1.0.6
@@ -22,8 +21,8 @@ require (
 	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa // indirect
 )
 
-// 上游的五个契约包（erp-finance、erp-inventory、infra-workflow、mdm-customer、
-// mdm-product 各自 gen/ 下的嵌套模块）直接 require 各自发布的 tag，不在本仓库里
+// 上游的四个契约包（erp-inventory、infra-workflow、mdm-customer、mdm-product
+// 各自 gen/ 下的嵌套模块）直接 require 各自发布的 tag，不在本仓库里
 // 复制一份：同一份生成代码以两个 import 路径进同一个外壳（或同一个测试二进制）时，
 // 两份 init() 都往 protobuf 全局注册表注册同一个类型全名，第二次直接 panic，
 // replace 也合并不了两个不同的 import 路径。make import-scan 只放行

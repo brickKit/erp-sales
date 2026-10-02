@@ -45,13 +45,13 @@ migrate-idempotent:  ## 同一份迁移连跑两次都成功。需要 PG_HOST PG
 	@mkdir -p build && go build -o build/migrate-probe ./backend/cmd/migrate
 	@build/migrate-probe up && build/migrate-probe up && echo "✓ 迁移幂等"
 
-dag-check:  ## 依赖全部钉在 @2.0.0、不依赖自己（跨组件整图有没有环由 brickkit up --dry-run 判）
-	@python3 -c 'import sys, yaml; \
+dag-check:  ## 依赖全部钉在 2.x 的确切版本（@2.x.y）、不依赖自己（跨组件整图有没有环由 brickkit up --dry-run 判）
+	@python3 -c 'import re, sys, yaml; \
 	 deps = [(d["id"] if isinstance(d, dict) else d) for d in ((yaml.safe_load(open("component.yaml")).get("dependencies") or {}).get("components") or [])]; \
-	 bad = [d for d in deps if d.split("@")[0] == "$(ID)" or not d.endswith("@2.0.0")]; \
+	 bad = [d for d in deps if d.split("@")[0] == "$(ID)" or not re.fullmatch(r"[^@]+@2\.[0-9]+\.[0-9]+", d)]; \
 	 print("依赖：" + "、".join(deps)); \
-	 sys.exit("✗ 这几条依赖不是 @2.0.0 或指向自己：" + "、".join(bad) if bad else 0)'
-	@echo "✓ 依赖都是 @2.0.0，无自环"
+	 sys.exit("✗ 这几条依赖不是 2.x 的确切版本或指向自己：" + "、".join(bad) if bad else 0)'
+	@echo "✓ 依赖都钉在 2.x 的确切版本，无自环"
 
 contract-check:  ## proto 只增不改（buf lint + buf breaking，对比上一个发布 tag；还没有发布过就对比 main）
 	@# 对比 main 抓不住已经提交到 main 上的破坏性改动（在 main 上工作时等于自己比自己），

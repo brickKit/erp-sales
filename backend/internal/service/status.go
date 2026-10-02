@@ -36,7 +36,7 @@ func ToStatus(err error) error {
 	case errors.Is(err, repo.ErrForbidden):
 		return status.Error(codes.PermissionDenied, err.Error())
 	}
-	// 透传下游依赖组件（mdm-customer/mdm-product/erp-inventory/erp-finance）
+	// 透传下游依赖组件（mdm-customer/mdm-product/erp-inventory/infra-workflow）
 	// 已经返回的真实 gRPC status——ok==false 说明 err 根本不是一个 gRPC
 	// status（比如本地校验错误、context.DeadlineExceeded 之类的裸 error），
 	// 这种才落到最后的 codes.Internal。

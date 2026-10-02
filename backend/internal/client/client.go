@@ -1,6 +1,6 @@
 // Package client 拨号到本组件依赖的 gRPC 服务，返回类型化 stub。
 //
-// ⚠️ 不带 System 后缀的一组（Customer/Product/Inventory/Finance/Workflow）
+// ⚠️ 不带 System 后缀的一组（Customer/Product/Inventory/Workflow）
 // 走 besdk.UserClient，透传调用者的 JWT，下游按调用者身份做数据范围过滤；
 // 只许出现在用户请求路径上。*System 一组走 besdk.SystemClient，带本组件
 // 自己的身份、绕过下游数据范围，只许出现在事件 handler 里（目前只有
@@ -21,7 +21,6 @@ import (
 
 	besdk "github.com/brickKit/be-sdk-go"
 
-	financev1 "github.com/brickKit/erp-finance/gen/erp/finance/v1"
 	inventoryv1 "github.com/brickKit/erp-inventory/gen/erp/inventory/v1"
 	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
 	customerv1 "github.com/brickKit/mdm-customer/gen/mdm/customer/v1"
@@ -94,16 +93,6 @@ func (c *Clients) Inventory(ctx context.Context) (inventoryv1.InventoryServiceCl
 		return nil, noop, err
 	}
 	return inventoryv1.NewInventoryServiceClient(conn), conn.Close, nil
-}
-
-// Finance 拨一条到 erp/finance 的连接（透传调用者身份）。不在 ConfirmOrder
-// 的链里：财务侧的已用额度经事件与对账进入本地快照。
-func (c *Clients) Finance(ctx context.Context) (financev1.FinanceServiceClient, func() error, error) {
-	conn, err := c.dial(ctx, "erp/finance")
-	if err != nil {
-		return nil, noop, err
-	}
-	return financev1.NewFinanceServiceClient(conn), conn.Close, nil
 }
 
 // Workflow 拨一条到 infra/workflow 的连接（透传调用者身份）。可选依赖：
