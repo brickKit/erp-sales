@@ -229,13 +229,13 @@ func e2eTestCtx() context.Context {
 	return besdk.ContextWithClaims(context.Background(), besdk.Claims{Sub: "u_e2e_test_owner", DeptPath: "/1/12/"})
 }
 
-// seedCustomerSnapshot 直接写 customer_snapshots，模拟"mdm.customer.created.v1
-// 事件已经被消费过"——本测试进程没有跑 backend/internal/consumer 的后台
-// 循环（那是 Module.Start 的一部分，这里只直接构造 Orchestrator），事件
-// 不会自己传播过来。ConfirmOrder 的③本地信用额度校验读的是这张本地表，
-// 不是实时问 mdm-customer，所以真实场景里也是靠这张表，不是测试特有的
-// 走后门（repo.GetCustomerSnapshot_查不到时返回0 那条测试已经验证过
-// "查不到"分支本身是对的——这里只是补上"已经消费过事件"的前置状态）。
+// seedCustomerSnapshot 直接写 customer_snapshots（version 1），模拟
+// "mdm.customer.created.v1 事件已经被消费过"——本测试进程没有跑
+// backend/internal/consumer 的后台循环（那是 Module.Start 的一部分，这里只
+// 直接构造 Orchestrator），事件不会自己传播过来。刚建出来的真实客户也是
+// version 1：确认链用 BatchGet 的结果刷新快照时版本相同、不改，所以这里写
+// 进去的额度就是判定用的额度。没有快照、或 mdm/customer 的额度比快照新的
+// 情形见 snapshot_refresh_test.go。
 func seedCustomerSnapshot(t *testing.T, db *sql.DB, customerID, creditLimit string) {
 	t.Helper()
 	err := besdk.WithTx(context.Background(), db, "erp_sales_rw", "erp_sales", func(tx *sql.Tx) error {
@@ -321,7 +321,7 @@ func TestConfirmOrder_真实库存不足(t *testing.T) {
 	if err == nil {
 		t.Fatal("库存明显不够，ConfirmOrder 应该失败")
 	}
-	// 断言失败原因确实是 Reserve 真的报了库存不足，不是本地信用额度先
+	// 断言失败原因确实是 Reserve 真的报了库存不足，不是信用额度先
 	// 拒绝了——只看 err != nil 分不清是不是为了错误的原因失败。
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("期望库存不足的 FailedPrecondition，实际：%v", err)
