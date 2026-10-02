@@ -51,7 +51,6 @@ CREATE INDEX sales_orders_owner ON sales_orders (owner_id);
 CREATE TABLE sales_orders_2026_09_01 PARTITION OF sales_orders FOR VALUES FROM ('2026-09-01') TO ('2026-10-01');
 CREATE TABLE sales_orders_2026_10_01 PARTITION OF sales_orders FOR VALUES FROM ('2026-10-01') TO ('2026-11-01');
 CREATE TABLE sales_orders_2026_11_01 PARTITION OF sales_orders FOR VALUES FROM ('2026-11-01') TO ('2026-12-01');
-ALTER TABLE sales_orders OWNER TO erp_sales_rw;
 
 -- 订单行。⚠️ 子表跟随主表分区（§11.2.4）：分区键用**订单头的**
 -- created_at（列名 order_created_at），不用行自己的创建时间——否则补加
@@ -92,7 +91,6 @@ CREATE INDEX sales_order_items_product ON sales_order_items (product_id);
 CREATE TABLE sales_order_items_2026_09_01 PARTITION OF sales_order_items FOR VALUES FROM ('2026-09-01') TO ('2026-10-01');
 CREATE TABLE sales_order_items_2026_10_01 PARTITION OF sales_order_items FOR VALUES FROM ('2026-10-01') TO ('2026-11-01');
 CREATE TABLE sales_order_items_2026_11_01 PARTITION OF sales_order_items FOR VALUES FROM ('2026-11-01') TO ('2026-12-01');
-ALTER TABLE sales_order_items OWNER TO erp_sales_rw;
 
 -- 价格表：有序规则表，第一条命中赢，不做规则叠加（设计计划 §3.2）。
 CREATE TABLE pricelists (
