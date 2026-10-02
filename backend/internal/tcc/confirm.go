@@ -249,7 +249,10 @@ func (o *Orchestrator) maybeCreateExceptionTask(ctx context.Context, orderID, id
 		IdempotencyKey:   idempotencyKey + ":exception-task",
 		Type:             workflowv1.TaskType_TASK_TYPE_EXCEPTION,
 		AssigneeSub:      o.ExceptionAssigneeSub,
-		AssigneeDeptPath: "", // 没有组织树可以路由，留空：派给配置的那个人，不限部门
+		// 只配置了被指派人的 sub，不知道他的部门路径，所以留空。workflow 对
+		// 空路径的约定是"只有被指派人本人看得到"：部门子树里的其他人、管理
+		// 视图都看不到这条待办。绝不填调用方自己的数据范围值。
+		AssigneeDeptPath: "",
 		Title:            fmt.Sprintf("订单 %s 补偿连续失败，需要人工介入", orderID),
 		SummaryJson:      string(summaryJSON),
 		SourceComponent:  "erp/sales",

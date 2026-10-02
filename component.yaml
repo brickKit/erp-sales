@@ -27,7 +27,7 @@ dependencies:
     - mdm/customer@2.0.1
     - mdm/product@2.0.0
     - erp/inventory@2.0.0
-    - id: infra/workflow@2.0.0
+    - id: infra/workflow@2.0.1
       optional: true
 
 configSchema:
