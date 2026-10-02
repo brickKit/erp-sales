@@ -3,18 +3,19 @@ info:
   title: erp-sales · 销售管理
   version: 1.0.0
   description: |
-    对外 REST 面。内部 gRPC，外部 HTTP（§2.1）。
-    ⚠️ 不暴露 BatchGetOrder/GetOrderStatus——前者是给其他组件 gRPC 客户端
-    防 N+1 用的批量读优化，后者是组件间协议（防"薛定谔的超时"，设计计划
-    §3、§4.5）。
-    CalculatePriceDryRun **必须**暴露——前端下单页要实时试算，前端/BFF
-    严禁自己算钱（设计计划 §3.2、§8.4）。
+    对外 REST 面（组件之间走 gRPC）。
+    不暴露 BatchGetOrder/GetOrderStatus：前者是给其他组件 gRPC 客户端
+    防 N+1 用的批量读，后者是组件间协议（调用方超时之后先查状态再决定）。
+    CalculatePriceDryRun 必须暴露：前端下单页要实时试算，前端/BFF
+    不许自己算钱。
+    列表与统计都按调用者的数据范围过滤：org（dept_path 前缀）或 owner
+    （owner_id 等于调用者），由 view 参数二选一。
 
 servers:
   - url: /erp/sales
 
-# ⚠️ /healthz 不在这份契约里：be-sdk-go 的 NewGinEngine 给每个组件统一挂的，
-# 路径固定是裸根路径 /healthz（§12.3.6）。
+# /healthz 不在这份契约里：be-sdk-go 的 NewGinEngine 给每个组件统一挂，
+# 路径固定是裸根路径 /healthz。
 
 paths:
   /orders:
@@ -25,7 +26,7 @@ paths:
         - name: cursor
           in: query
           schema: { type: string }
-          description: 游标分页（决策 53），无 offset 参数——深分页在契约层面不可表达
+          description: 游标分页，没有 offset 参数——深分页在契约层面不可表达
         - name: page_size
           in: query
           schema: { type: integer }
@@ -41,7 +42,15 @@ paths:
         - name: created_before
           in: query
           schema: { type: string, format: date-time }
-          description: 不传时间范围时框架层自动注入最近 90 天（§11.4.1）
+          description: 不传时间范围时默认最近 90 天；格式不是 RFC 3339 时返回 400
+        - name: source_opportunity_id
+          in: query
+          schema: { type: string }
+          description: 非空时只返回由这张商机赢单转成的订单（商机详情页反查订单用）
+        - name: view
+          in: query
+          schema: { type: string, enum: [dept, mine] }
+          description: 数据范围视角。dept（默认）：调用者部门及下级（dept_path 前缀）；mine：owner_id 等于调用者
       responses:
         "200":
           description: OK
@@ -84,7 +93,7 @@ paths:
 
   /orders/{id}/confirm:
     post:
-      summary: ConfirmOrder（TCC 链：校验+预留+建单，见设计计划 §3.1）
+      summary: ConfirmOrder（校验客户与产品、本地信用额度预判、预留库存、确认并发事件；失败时补偿）
       operationId: confirmSalesOrder
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
@@ -191,6 +200,9 @@ components:
         dept_path: { type: string }
         owner_id: { type: string }
         reservation_id: { type: string }
+        source_opportunity_id:
+          type: string
+          description: 由哪张商机赢单自动转成的订单；空串表示手工建单。只由赢单消费路径写入，建单请求不接受这个字段
         version: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -201,7 +213,7 @@ components:
       properties:
         idempotency_key:
           type: string
-          description: 跨重试幂等键（§4.6），被调用方用唯一约束去重
+          description: 跨重试幂等键，被调用方用唯一约束去重
 
     CreateOrderItemInput:
       type: object

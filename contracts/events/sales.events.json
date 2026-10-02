@@ -1,17 +1,17 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "erp-sales 事件清单",
-  "note": "Schema 演进铁律：只增不删不改（决策 19）。消费者宽容反序列化。",
+  "note": "Schema 只增不删不改：可以新增字段和事件，不能删字段、改类型、删 subject。消费者宽容反序列化（不认识的字段忽略）。",
   "envelope": {
-    "description": "所有事件共用的信封。三个 Header 字段由 be-sdk 自动填/校验（§3.10）",
+    "description": "所有事件共用的信封；trace_id / causation_id / hop_count 由 be-sdk 自动填写与校验",
     "required": ["subject", "aggregate_id", "version", "trace_id", "causation_id", "hop_count", "occurred_at"],
     "properties": {
       "subject":      { "type": "string", "pattern": "^[a-z]+\\.[a-z-]+\\.[a-z-]+\\.v[0-9]+$" },
       "aggregate_id": { "type": "string" },
-      "version":      { "type": "integer", "description": "消费者只在严格大于本地当前值时更新（决策 43）" },
+      "version":      { "type": "integer", "description": "消费者只在严格大于本地当前值时更新" },
       "trace_id":     { "type": "string" },
       "causation_id": { "type": "string" },
-      "hop_count":    { "type": "integer", "maximum": 5, "description": "> 5 直接丢弃进 DLQ（决策 42）" },
+      "hop_count":    { "type": "integer", "maximum": 5, "description": "> 5 直接进死信队列" },
       "occurred_at":  { "type": "string", "format": "date-time" }
     }
   },
@@ -19,7 +19,7 @@
     {
       "subject": "sales.order.created.v1",
       "grade": "core",
-      "note": "核心交易事件：必须持久化、幂等、进死信队列（§3.10 事件分级）。⚠️ 在 ConfirmOrder 成功后发，不是 CreateOrder——草稿单不该产生应收凭证（设计计划 §4）。消费者是 erp-finance，生成应收凭证 + 累加已用额度。",
+      "note": "核心交易事件：持久化、幂等、可进死信队列。在 ConfirmOrder 成功后发，不是 CreateOrder——草稿单不该产生应收凭证。消费者：erp/finance（生成应收凭证、累加已用额度）；crm/opportunity（source_opportunity_id 非空时回填商机的 order_id）。",
       "payload": {
         "type": "object",
         "required": ["order_id", "order_no", "customer_id", "items", "total_amount", "version"],
@@ -40,7 +40,8 @@
             }
           },
           "total_amount": { "type": "string", "description": "decimal-as-string" },
-          "version":      { "type": "integer" }
+          "version":      { "type": "integer" },
+          "source_opportunity_id": { "type": "string", "description": "由哪张商机赢单自动转成的订单；空串表示手工建单。可选字段，读不到时按空串处理" }
         }
       }
     },

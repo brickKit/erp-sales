@@ -51,6 +51,7 @@ type Order struct {
 	ReservationID        string
 	CompensationAttempts int
 	SuspendedReason      string
+	SourceOpportunityID  string // 由哪张商机赢单转成；空串 = 手工建单
 	Version              int64
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
@@ -66,11 +67,11 @@ func getOrderTx(ctx context.Context, tx *sql.Tx, id string) (*Order, error) {
 	row := tx.QueryRowContext(ctx, `
 		SELECT id, order_no, customer_id, customer_name, status, total_amount,
 			dept_id, dept_path, owner_id, reservation_id, compensation_attempts,
-			suspended_reason, version, created_at, updated_at
+			suspended_reason, source_opportunity_id, version, created_at, updated_at
 		FROM sales_orders WHERE id = $1`, orderID)
 	if err := row.Scan(&rawID, &o.OrderNo, &o.CustomerID, &o.CustomerName, &o.Status, &o.TotalAmount,
 		&o.DeptID, &o.DeptPath, &o.OwnerID, &o.ReservationID, &o.CompensationAttempts,
-		&o.SuspendedReason, &o.Version, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		&o.SuspendedReason, &o.SourceOpportunityID, &o.Version, &o.CreatedAt, &o.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("%w: order id=%s", ErrNotFound, id)
 		}
@@ -152,12 +153,14 @@ func (r *Repo) GetOrderStatus(ctx context.Context, id string) (string, error) {
 
 // ListInput 对应 ListOrdersRequest。刻意没有 offset 字段（决策 53）。
 type ListInput struct {
-	Cursor        string
-	PageSize      int
-	CustomerID    string
-	StatusFilter  string
-	CreatedAfter  time.Time
-	CreatedBefore time.Time
+	Cursor       string
+	PageSize     int
+	CustomerID   string
+	StatusFilter string
+	// SourceOpportunityID 非空时只返回由这张商机转成的订单
+	SourceOpportunityID string
+	CreatedAfter        time.Time
+	CreatedBefore       time.Time
 	// ── 阶段三 Task 6：org/owner 两维数据范围，"我的订单"和"本部门及
 	// 下级的订单"是销售组织最基本的两个视图（设计计划 §1），由调用方
 	// （listOrdersHandler 的 ?view= 参数）静态选择用哪一个，本函数只
@@ -206,6 +209,10 @@ func (r *Repo) ListOrders(ctx context.Context, in ListInput) (*ListResult, error
 		if in.StatusFilter != "" {
 			args = append(args, in.StatusFilter)
 			query += fmt.Sprintf(" AND status = $%d", len(args))
+		}
+		if in.SourceOpportunityID != "" {
+			args = append(args, in.SourceOpportunityID)
+			query += fmt.Sprintf(" AND source_opportunity_id = $%d", len(args))
 		}
 		if ck != nil {
 			args = append(args, ck.CreatedAt, ck.ID)

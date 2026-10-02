@@ -81,6 +81,7 @@ func toProtoOrder(o *repo.Order) *salesv1.Order {
 		Status: toProtoStatus(o.Status), Items: items, TotalAmount: o.TotalAmount,
 		DeptId: o.DeptID, DeptPath: o.DeptPath, OwnerId: o.OwnerID, ReservationId: o.ReservationID,
 		Version: o.Version, CreatedAt: timestamppb.New(o.CreatedAt), UpdatedAt: timestamppb.New(o.UpdatedAt),
+		SourceOpportunityId: o.SourceOpportunityID,
 	}
 }
 
@@ -147,7 +148,10 @@ func (s *server) GetOrder(ctx context.Context, req *salesv1.GetOrderRequest) (*s
 }
 
 func (s *server) ListOrders(ctx context.Context, req *salesv1.ListOrdersRequest) (*salesv1.ListOrdersResponse, error) {
-	in := repo.ListInput{Cursor: req.Cursor, PageSize: int(req.PageSize), CustomerID: req.CustomerId}
+	in := repo.ListInput{
+		Cursor: req.Cursor, PageSize: int(req.PageSize), CustomerID: req.CustomerId,
+		SourceOpportunityID: req.SourceOpportunityId,
+	}
 	if req.StatusFilter != salesv1.OrderStatus_ORDER_STATUS_UNSPECIFIED {
 		in.StatusFilter = fromProtoStatus(req.StatusFilter)
 	}

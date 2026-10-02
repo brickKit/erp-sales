@@ -179,6 +179,7 @@ func (o *Orchestrator) createOrderForOpportunity(ctx context.Context, p Opportun
 		// 必须落到同一条 command_idempotency 记录上。
 		IdempotencyKey: "crm-won:" + p.OpportunityID, CustomerID: p.CustomerID, CustomerName: customer.Name,
 		Items: createItems, DeptID: leafDeptID(p.DeptPath), DeptPath: p.DeptPath, OwnerID: p.OwnerID,
+		SourceOpportunityID: p.OpportunityID,
 	})
 }
 

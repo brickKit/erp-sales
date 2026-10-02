@@ -203,12 +203,12 @@ func (x *OrderItem) GetSubtotal() string {
 	return ""
 }
 
-// Order：订单头 + 行。dept_id/dept_path/owner_id 是**创建时快照**
-// （设计计划 §1 明文：不是运行时查"这个人现在在哪个部门"）。
+// Order：订单头 + 行。dept_id/dept_path/owner_id 是**创建时快照**，
+// 不是运行时查"这个人现在在哪个部门"：销售换部门后，他以前的订单不跟着走。
 type Order struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	Id           string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	OrderNo      string                 `protobuf:"bytes,2,opt,name=order_no,json=orderNo,proto3" json:"order_no,omitempty"` // 允许有缺口（设计计划 §9 第 3 条），不是 post_no
+	OrderNo      string                 `protobuf:"bytes,2,opt,name=order_no,json=orderNo,proto3" json:"order_no,omitempty"` // 由 id 派生，允许有缺口（草稿单作废会留洞）
 	CustomerId   string                 `protobuf:"bytes,3,opt,name=customer_id,json=customerId,proto3" json:"customer_id,omitempty"`
 	CustomerName string                 `protobuf:"bytes,4,opt,name=customer_name,json=customerName,proto3" json:"customer_name,omitempty"` // 快照
 	Status       OrderStatus            `protobuf:"varint,5,opt,name=status,proto3,enum=erp.sales.v1.OrderStatus" json:"status,omitempty"`
@@ -223,8 +223,11 @@ type Order struct {
 	Version       int64                  `protobuf:"varint,12,opt,name=version,proto3" json:"version,omitempty"`
 	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// 由哪张商机赢单自动转成的订单（crm.opportunity.won.v1 的 opportunity_id）；
+	// 空串表示手工建单。只由赢单消费路径写入，CreateOrder 不接受这个字段。
+	SourceOpportunityId string `protobuf:"bytes,15,opt,name=source_opportunity_id,json=sourceOpportunityId,proto3" json:"source_opportunity_id,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *Order) Reset() {
@@ -353,6 +356,13 @@ func (x *Order) GetUpdatedAt() *timestamppb.Timestamp {
 		return x.UpdatedAt
 	}
 	return nil
+}
+
+func (x *Order) GetSourceOpportunityId() string {
+	if x != nil {
+		return x.SourceOpportunityId
+	}
+	return ""
 }
 
 type CreateOrderItemInput struct {
@@ -1086,15 +1096,17 @@ func (x *GetOrderRequest) GetId() string {
 
 type ListOrdersRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// ⚠️ 禁止深 Offset，强制 Cursor Pagination（决策 53）
+	// 游标分页，没有 offset：深分页在契约层面不可表达
 	Cursor        string                 `protobuf:"bytes,1,opt,name=cursor,proto3" json:"cursor,omitempty"`
 	PageSize      int32                  `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	CustomerId    string                 `protobuf:"bytes,3,opt,name=customer_id,json=customerId,proto3" json:"customer_id,omitempty"`
 	StatusFilter  OrderStatus            `protobuf:"varint,4,opt,name=status_filter,json=statusFilter,proto3,enum=erp.sales.v1.OrderStatus" json:"status_filter,omitempty"`
 	CreatedAfter  *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=created_after,json=createdAfter,proto3" json:"created_after,omitempty"`
 	CreatedBefore *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_before,json=createdBefore,proto3" json:"created_before,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// 非空时只返回由这张商机转成的订单（商机详情页反查订单用）
+	SourceOpportunityId string `protobuf:"bytes,7,opt,name=source_opportunity_id,json=sourceOpportunityId,proto3" json:"source_opportunity_id,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ListOrdersRequest) Reset() {
@@ -1167,6 +1179,13 @@ func (x *ListOrdersRequest) GetCreatedBefore() *timestamppb.Timestamp {
 		return x.CreatedBefore
 	}
 	return nil
+}
+
+func (x *ListOrdersRequest) GetSourceOpportunityId() string {
+	if x != nil {
+		return x.SourceOpportunityId
+	}
+	return ""
 }
 
 type ListOrdersResponse struct {
@@ -1426,7 +1445,7 @@ const file_erp_sales_v1_sales_proto_rawDesc = "" +
 	"unit_price\x18\x06 \x01(\tR\tunitPrice\x12\x1a\n" +
 	"\bdiscount\x18\a \x01(\tR\bdiscount\x12\x19\n" +
 	"\btax_rate\x18\b \x01(\tR\ataxRate\x12\x1a\n" +
-	"\bsubtotal\x18\t \x01(\tR\bsubtotal\"\x85\x04\n" +
+	"\bsubtotal\x18\t \x01(\tR\bsubtotal\"\xb9\x04\n" +
 	"\x05Order\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x19\n" +
 	"\border_no\x18\x02 \x01(\tR\aorderNo\x12\x1f\n" +
@@ -1445,7 +1464,8 @@ const file_erp_sales_v1_sales_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"G\n" +
+	"updated_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x122\n" +
+	"\x15source_opportunity_id\x18\x0f \x01(\tR\x13sourceOpportunityId\"G\n" +
 	"\x14CreateOrderItemInput\x12\x1d\n" +
 	"\n" +
 	"product_id\x18\x01 \x01(\tR\tproductId\x12\x10\n" +
@@ -1493,7 +1513,7 @@ const file_erp_sales_v1_sales_proto_rawDesc = "" +
 	"\x05items\x18\x01 \x03(\v2#.erp.sales.v1.PriceDryRunResultItemR\x05items\x12!\n" +
 	"\ftotal_amount\x18\x02 \x01(\tR\vtotalAmount\"!\n" +
 	"\x0fGetOrderRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"\xad\x02\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"\xe1\x02\n" +
 	"\x11ListOrdersRequest\x12\x16\n" +
 	"\x06cursor\x18\x01 \x01(\tR\x06cursor\x12\x1b\n" +
 	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12\x1f\n" +
@@ -1501,7 +1521,8 @@ const file_erp_sales_v1_sales_proto_rawDesc = "" +
 	"customerId\x12>\n" +
 	"\rstatus_filter\x18\x04 \x01(\x0e2\x19.erp.sales.v1.OrderStatusR\fstatusFilter\x12?\n" +
 	"\rcreated_after\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\fcreatedAfter\x12A\n" +
-	"\x0ecreated_before\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\rcreatedBefore\"b\n" +
+	"\x0ecreated_before\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\rcreatedBefore\x122\n" +
+	"\x15source_opportunity_id\x18\a \x01(\tR\x13sourceOpportunityId\"b\n" +
 	"\x12ListOrdersResponse\x12+\n" +
 	"\x06orders\x18\x01 \x03(\v2\x13.erp.sales.v1.OrderR\x06orders\x12\x1f\n" +
 	"\vnext_cursor\x18\x02 \x01(\tR\n" +

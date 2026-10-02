@@ -68,11 +68,11 @@ message OrderItem {
   string subtotal        = 9;
 }
 
-// Order：订单头 + 行。dept_id/dept_path/owner_id 是**创建时快照**
-// （设计计划 §1 明文：不是运行时查"这个人现在在哪个部门"）。
+// Order：订单头 + 行。dept_id/dept_path/owner_id 是**创建时快照**，
+// 不是运行时查"这个人现在在哪个部门"：销售换部门后，他以前的订单不跟着走。
 message Order {
   string   id              = 1;
-  string   order_no        = 2; // 允许有缺口（设计计划 §9 第 3 条），不是 post_no
+  string   order_no        = 2; // 由 id 派生，允许有缺口（草稿单作废会留洞）
   string   customer_id     = 3;
   string   customer_name   = 4; // 快照
   OrderStatus status        = 5;
@@ -87,6 +87,9 @@ message Order {
   int64    version          = 12;
   google.protobuf.Timestamp created_at = 13;
   google.protobuf.Timestamp updated_at = 14;
+  // 由哪张商机赢单自动转成的订单（crm.opportunity.won.v1 的 opportunity_id）；
+  // 空串表示手工建单。只由赢单消费路径写入，CreateOrder 不接受这个字段。
+  string   source_opportunity_id = 15;
 }
 
 message CreateOrderItemInput {
@@ -144,13 +147,15 @@ message CalculatePriceDryRunResponse {
 message GetOrderRequest { string id = 1; }
 
 message ListOrdersRequest {
-  // ⚠️ 禁止深 Offset，强制 Cursor Pagination（决策 53）
+  // 游标分页，没有 offset：深分页在契约层面不可表达
   string cursor          = 1;
   int32  page_size        = 2;
   string customer_id      = 3;
   OrderStatus status_filter = 4;
   google.protobuf.Timestamp created_after  = 5;
   google.protobuf.Timestamp created_before = 6;
+  // 非空时只返回由这张商机转成的订单（商机详情页反查订单用）
+  string source_opportunity_id = 7;
 }
 message ListOrdersResponse {
   repeated Order orders = 1;

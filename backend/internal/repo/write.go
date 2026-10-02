@@ -45,6 +45,8 @@ type CreateOrderInput struct {
 	DeptID   string
 	DeptPath string
 	OwnerID  string
+	// SourceOpportunityID 只由赢单消费路径填写（商机 id）；手工建单留空。
+	SourceOpportunityID string
 }
 
 func sumSubtotals(items []CreateOrderItemInput) (string, error) {
@@ -92,10 +94,11 @@ func (r *Repo) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order, er
 		var id int64
 		var createdAt time.Time
 		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO sales_orders (customer_id, customer_name, status, total_amount, dept_id, dept_path, owner_id)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			INSERT INTO sales_orders
+				(customer_id, customer_name, status, total_amount, dept_id, dept_path, owner_id, source_opportunity_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 			RETURNING id, created_at`,
-			in.CustomerID, in.CustomerName, StatusDraft, total, in.DeptID, in.DeptPath, in.OwnerID,
+			in.CustomerID, in.CustomerName, StatusDraft, total, in.DeptID, in.DeptPath, in.OwnerID, in.SourceOpportunityID,
 		).Scan(&id, &createdAt); err != nil {
 			return fmt.Errorf("写 sales_orders: %w", err)
 		}
@@ -223,6 +226,7 @@ func buildOrderCreatedPayload(o *Order) ([]byte, error) {
 	return json.Marshal(map[string]any{
 		"order_id": o.ID, "order_no": o.OrderNo, "customer_id": o.CustomerID,
 		"items": items, "total_amount": o.TotalAmount, "version": o.Version,
+		"source_opportunity_id": o.SourceOpportunityID,
 	})
 }
 

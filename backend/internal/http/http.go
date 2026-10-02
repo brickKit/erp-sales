@@ -51,7 +51,7 @@ func toOrderDTO(o *repo.Order) gin.H {
 		"id": o.ID, "order_no": o.OrderNo, "customer_id": o.CustomerID, "customer_name": o.CustomerName,
 		"status": o.Status, "items": items, "total_amount": o.TotalAmount,
 		"dept_id": o.DeptID, "dept_path": o.DeptPath, "owner_id": o.OwnerID,
-		"reservation_id": o.ReservationID, "version": o.Version,
+		"reservation_id": o.ReservationID, "source_opportunity_id": o.SourceOpportunityID, "version": o.Version,
 		"created_at": o.CreatedAt.Format(rfc3339), "updated_at": o.UpdatedAt.Format(rfc3339),
 	}
 }
@@ -159,7 +159,8 @@ func parseListInput(c *gin.Context) (repo.ListInput, error) {
 	in := repo.ListInput{
 		Cursor: c.Query("cursor"), PageSize: pageSize,
 		CustomerID: c.Query("customer_id"), StatusFilter: c.Query("status_filter"),
-		ViewMine: c.Query("view") == "mine",
+		SourceOpportunityID: c.Query("source_opportunity_id"),
+		ViewMine:            c.Query("view") == "mine",
 	}
 	for _, p := range []struct {
 		name string

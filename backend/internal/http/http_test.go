@@ -151,3 +151,40 @@ func TestListOrders_REST时间参数格式不对返回400(t *testing.T) {
 		}
 	}
 }
+
+// GET /orders?source_opportunity_id= 只返回由这张商机转成的订单，响应里带
+// source_opportunity_id（商机详情页据此反查订单）。
+func TestListOrders_REST按来源商机过滤且返回该字段(t *testing.T) {
+	r, _ := testRepo(t)
+	dept := "/" + uniq("dept") + "/"
+	opp := uniq("opp")
+	ctx := context.Background()
+	won, err := r.CreateOrder(ctx, repo.CreateOrderInput{
+		IdempotencyKey: uniq("http-won"), CustomerID: "C-http", CustomerName: "REST 测试客户",
+		Items: []repo.CreateOrderItemInput{{ProductID: "P-http", ProductSKU: "SKU", ProductName: "N", UOMID: "EA",
+			Qty: "1", UnitPrice: "10.00", Discount: "0", TaxRate: "0", Subtotal: "10.00"}},
+		DeptPath: dept, OwnerID: "u_http", SourceOpportunityID: opp,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manual := createOrder(t, r, dept, "u_http")
+	eng := newEngine(testService(r), besdk.Claims{Sub: "u_viewer", DeptPath: dept})
+
+	code, body := do(t, eng, http.MethodGet, "/erp/sales/orders?"+url.Values{"source_opportunity_id": {opp}}.Encode())
+	if code != http.StatusOK {
+		t.Fatalf("期望 200，实际 %d（%s）", code, body)
+	}
+	var lb struct {
+		Orders []struct {
+			ID                  string `json:"id"`
+			SourceOpportunityID string `json:"source_opportunity_id"`
+		} `json:"orders"`
+	}
+	if err := json.Unmarshal(body, &lb); err != nil {
+		t.Fatal(err)
+	}
+	if len(lb.Orders) != 1 || lb.Orders[0].ID != won.ID || lb.Orders[0].SourceOpportunityID != opp {
+		t.Fatalf("期望只返回订单 %s（source_opportunity_id=%s），不含手工单 %s，实际 %+v", won.ID, opp, manual.ID, lb.Orders)
+	}
+}
