@@ -9,7 +9,10 @@ info:
     CalculatePriceDryRun 必须暴露：前端下单页要实时试算，前端/BFF
     不许自己算钱。
     列表与统计都按调用者的数据范围过滤：org（dept_path 前缀）或 owner
-    （owner_id 等于调用者），由 view 参数二选一。
+    （owner_id 等于调用者），由 view 参数二选一。单张订单（查看、确认、
+    取消、发货）两者任一命中即可。没有部门的调用者 org 维什么都不命中，
+    只看得到、动得了自己名下的订单；他建的单 dept_path / dept_id 为空串，
+    只对他本人可见。
 
 servers:
   - url: /erp/sales
@@ -50,7 +53,10 @@ paths:
         - name: view
           in: query
           schema: { type: string, enum: [dept, mine] }
-          description: 数据范围视角。dept（默认）：调用者部门及下级（dept_path 前缀）；mine：owner_id 等于调用者
+          description: |
+            数据范围视角，二选一。dept（默认）：调用者部门及下级（dept_path 前缀）；mine：owner_id 等于调用者。
+            其它取值返回 400。没有部门的调用者（token 的 dept_path 为空）dept 视图是空列表；
+            dept_path 为 "/" 是整棵部门树的根标记，看得到所有带部门的订单
       responses:
         "200":
           description: OK
@@ -63,6 +69,8 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Order" }
                   next_cursor: { type: string }
+        "400":
+          description: view 不是 dept / mine，cursor 非法，或 created_after / created_before 不是 RFC 3339 时间
     post:
       summary: CreateOrder（建 DRAFT，不预留库存）
       operationId: createSalesOrder
@@ -90,6 +98,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Order" }
+        "404":
+          description: 订单不存在，或不在调用者的数据范围内（两种情况答得一模一样，不泄露订单是否存在）
 
   /orders/{id}/confirm:
     post:
@@ -108,6 +118,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Order" }
+        "403":
+          description: 订单不在调用者的数据范围内（看得到才动得了）
+        "404":
+          description: 订单不存在
 
   /orders/{id}/cancel:
     post:
@@ -126,6 +140,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Order" }
+        "403":
+          description: 订单不在调用者的数据范围内（看得到才动得了）
+        "404":
+          description: 订单不存在
 
   /orders/{id}/ship:
     post:
@@ -144,6 +162,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Order" }
+        "403":
+          description: 订单不在调用者的数据范围内（看得到才动得了）
+        "404":
+          description: 订单不存在
 
   /price/dry-run:
     post:
@@ -178,13 +200,17 @@ paths:
         - name: view
           in: query
           schema: { type: string, enum: [dept, mine] }
-          description: 同 GET /orders 的 view。dept（默认）：调用者部门及下级；mine：owner_id 等于调用者
+          description: |
+            同 GET /orders 的 view，二选一，不是 OR。dept（默认）：调用者部门及下级；mine：owner_id 等于调用者。
+            其它取值返回 400。没有部门的调用者 dept 视图的各项统计都是 0
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema: { $ref: "#/components/schemas/StatsSummary" }
+        "400":
+          description: period 不是 week / month / quarter，或 view 不是 dept / mine
 
 components:
   schemas:
@@ -221,8 +247,8 @@ components:
           type: array
           items: { $ref: "#/components/schemas/OrderItem" }
         total_amount: { type: string }
-        dept_id: { type: string }
-        dept_path: { type: string }
+        dept_id: { type: string, description: 建单时的快照；建单人没有部门时为空串 }
+        dept_path: { type: string, description: 建单时的快照（以 / 开头的部门路径）；建单人没有部门时为空串，这张单只对 owner 可见 }
         owner_id: { type: string }
         reservation_id: { type: string }
         source_opportunity_id:

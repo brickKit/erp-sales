@@ -1,5 +1,6 @@
 // 没有分部门的调用者（token 里 dept_path 为空）：org 维什么都不命中，只剩
-// owner 维。dept 视图是空列表、统计是零，别人的订单看不到也动不了；"/" 是
+// owner 维。dept 视图是空列表、统计是零，别人的订单看不到（单张读取答
+// NotFound，与不存在一样）也动不了（命令答 Forbidden）；"/" 是
 // 整棵部门树的显式根标记，看得到所有带部门的订单（看不到 dept_path 为空的）。
 package service
 
@@ -95,14 +96,14 @@ func TestStatsSummary_无部门的人dept视图为零(t *testing.T) {
 	}
 }
 
-func TestGetOrder_无部门的人看别人的订单是Forbidden(t *testing.T) {
+func TestGetOrder_无部门的人看别人的订单是NotFound(t *testing.T) {
 	svc, r := newTestService(t)
 	me := uniqueSuffix("u_nodept")
 	customer := uniqueSuffix("C-nodept-get")
 	for _, dept := range []string{"/1/12/", ""} {
 		o := createScopedOrder(t, r, customer, dept, uniqueSuffix("u_other"))
-		if _, err := svc.GetOrder(noDeptCtx(me), o.ID); !errors.Is(err, repo.ErrForbidden) {
-			t.Fatalf("无部门的人看别人的订单（dept_path=%q）应该是 ErrForbidden，实际：%v", dept, err)
+		if _, err := svc.GetOrder(noDeptCtx(me), o.ID); !errors.Is(err, repo.ErrNotFound) {
+			t.Fatalf("无部门的人看别人的订单（dept_path=%q）应该是 ErrNotFound（与不存在一样），实际：%v", dept, err)
 		}
 	}
 

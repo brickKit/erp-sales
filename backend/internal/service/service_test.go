@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -85,7 +86,7 @@ func TestGetOrder_范围内可以看到(t *testing.T) {
 	}
 }
 
-func TestGetOrder_范围外ErrForbidden(t *testing.T) {
+func TestGetOrder_范围外与不存在一样是ErrNotFound(t *testing.T) {
 	svc, r := newTestService(t)
 	ctx := context.Background()
 
@@ -97,12 +98,19 @@ func TestGetOrder_范围外ErrForbidden(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 既不在这个部门前缀下，也不是 owner——应该 ErrForbidden，不是
-	// 悄悄放行、也不是 ErrNotFound（订单真实存在）。
+	// 既不在这个部门前缀下，也不是 owner：单张读取答 ErrNotFound，和这个 id
+	// 根本不存在时一模一样（错误文案也一样），数据范围不泄露"这张单存在"。
 	authed := besdk.ContextWithClaims(ctx, besdk.Claims{Sub: "u_stranger", DeptPath: "/1/99/"})
 	_, err = svc.GetOrder(authed, order.ID)
-	if !errors.Is(err, repo.ErrForbidden) {
-		t.Fatalf("范围外应该是 ErrForbidden，实际：%v", err)
+	if !errors.Is(err, repo.ErrNotFound) {
+		t.Fatalf("范围外应该是 ErrNotFound，实际：%v", err)
+	}
+	_, missing := svc.GetOrder(authed, "999999999999")
+	if !errors.Is(missing, repo.ErrNotFound) {
+		t.Fatalf("不存在的 id 应该是 ErrNotFound，实际：%v", missing)
+	}
+	if want := strings.Replace(missing.Error(), "999999999999", order.ID, 1); err.Error() != want {
+		t.Fatalf("范围外与不存在的错误文案应该一样，实际 %q / %q", err.Error(), missing.Error())
 	}
 }
 

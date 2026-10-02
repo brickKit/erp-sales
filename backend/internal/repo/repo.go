@@ -25,8 +25,9 @@ var ErrOrderNotDraft = errors.New("订单不是草稿状态")
 // 订单做状态流转——CANCELLED 是终态，不能复活。
 var ErrOrderTerminal = errors.New("订单已经是终态，不能再流转")
 
-// ErrForbidden：调用者对某张具体订单既不在其 org 范围内也不是 owner。
-// 这张订单真实存在，调用者只是看不见，与 ErrNotFound 语义不同，不能混用。
+// ErrForbidden：调用者对某张具体订单做命令（确认、取消、发货），而他既不
+// 在其 org 范围内也不是 owner。单张读取对范围外的订单不用它，答 ErrNotFound
+// （与不存在一样，不泄露存在性）；命令答 403，告诉调用方"这一步你做不了"。
 var ErrForbidden = errors.New("无权访问该订单")
 
 // InScope 判断这张订单是否在调用者的数据范围内——org（dept_path 前缀

@@ -16,7 +16,8 @@ import (
 	"github.com/brickKit/erp-sales/v2/backend/internal/tcc"
 )
 
-// checkOrderInScope 是 ConfirmOrder/CancelOrder/ShipOrder 共用的一步：
+// checkOrderInScope 是 ConfirmOrder/CancelOrder/ShipOrder 共用的一步（范围外答
+// ErrForbidden；单张读取 GetOrder 范围外答 ErrNotFound，见那里）：
 // 这三个命令在真正执行状态流转之前，先确认这张订单在调用者的 org/owner
 // 范围内——只保护 List/Get 两个读接口、放过写接口，等于给"看不到就该
 // 动不了"这条判据留了个后门（同 erp-inventory/erp-finance 的既有判据：
@@ -143,6 +144,9 @@ func (s *Service) CalculatePriceDryRun(ctx context.Context, items []repo.PriceIn
 
 // ── 读 ──
 
+// GetOrder 是单张订单的读：订单在、但不在调用者范围内时答 ErrNotFound，错误
+// 文案与这个 id 根本不存在时一字不差——数据范围不能泄露"这张单存在"。对范围
+// 外订单的命令（确认、取消、发货）走 checkOrderInScope，答 ErrForbidden。
 func (s *Service) GetOrder(ctx context.Context, id string) (*repo.Order, error) {
 	if id == "" {
 		return nil, fmt.Errorf("%w: id 不能为空", ErrInvalidArgument)
@@ -153,7 +157,7 @@ func (s *Service) GetOrder(ctx context.Context, id string) (*repo.Order, error) 
 	}
 	scope := besdk.ScopeOf(ctx)
 	if !order.InScope(scope.Prefix, scope.Owner) {
-		return nil, repo.ErrForbidden
+		return nil, fmt.Errorf("%w: order id=%s", repo.ErrNotFound, id)
 	}
 	return order, nil
 }

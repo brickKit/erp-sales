@@ -13,8 +13,8 @@ import (
 // ToStatus 把 repo/tcc 层的哨兵错误翻成 gRPC status——HTTP 与 gRPC 两条
 // 对外接口共用同一套业务错误类型（同 erp-finance/erp-inventory 的判据）。
 //
-// ⚠️ 本组件比其余组件多一层特殊情况：err 可能是"透传"自四条依赖边某一
-// 次远程调用本身返回的 gRPC status（如 erp-inventory 的
+// ⚠️ 本组件比其余组件多一层特殊情况：err 可能是"透传"自某条依赖边一次
+// 远程调用本身返回的 gRPC status（如 erp-inventory 的
 // FailedPrecondition：库存不足）。这类错误不该被下面 default 分支压成
 // codes.Internal——那样会把"库存不足"这种业务性、调用方本该能识别的
 // 失败原因，变成一个看起来像系统内部错误的 500。所以在真正走到
