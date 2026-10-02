@@ -40,8 +40,9 @@ type CreateOrderInput struct {
 	Items          []CreateOrderItemInput
 	// dept_id/dept_path/owner_id 是创建时快照。调用方（tcc.CreateOrder）从
 	// besdk.ScopeOf(ctx) 取真实值（赢单转单时取自事件）——
-	// DeptPath/OwnerID 直接是 scope.Prefix/scope.Owner，DeptID 是
-	// dept_path 末段推出来的叶子部门 id（tcc.leafDeptID）。
+	// OwnerID 是 scope.Owner；DeptPath 在 scope.HasDept 时是 scope.Prefix，
+	// 否则是空串（不能写 SDK 的"无部门"哨兵，见 checkDeptPathSnapshot）；
+	// DeptID 是 dept_path 末段推出来的叶子部门 id（tcc.leafDeptID）。
 	DeptID   string
 	DeptPath string
 	OwnerID  string
@@ -70,6 +71,9 @@ func (r *Repo) CreateOrder(ctx context.Context, in CreateOrderInput) (*Order, er
 	}
 	if len(in.Items) == 0 {
 		return nil, fmt.Errorf("%w: items 不能为空", ErrInvalidArgument)
+	}
+	if err := checkDeptPathSnapshot(in.DeptPath); err != nil {
+		return nil, err
 	}
 	total, err := sumSubtotals(in.Items)
 	if err != nil {

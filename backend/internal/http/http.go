@@ -151,6 +151,19 @@ func getOrderHandler(svc *service.Service) gin.HandlerFunc {
 	}
 }
 
+// parseView 读 ?view=：dept（省略时的默认）或 mine，二选一。别的取值回 400——
+// 拼错的 view 悄悄当成 dept，调用者以为在看"我的订单"，拿到的却是整个部门的数。
+func parseView(c *gin.Context) (viewMine bool, err error) {
+	switch v := c.Query("view"); v {
+	case "", "dept":
+		return false, nil
+	case "mine":
+		return true, nil
+	default:
+		return false, fmt.Errorf("view 只能是 dept / mine，实际 %q", v)
+	}
+}
+
 // parseListInput 读 GET /orders 的查询参数。created_after / created_before
 // 是 RFC 3339 时间，不传就由 repo 补默认窗口；格式不对返回错误（handler
 // 回 400），不悄悄忽略。
@@ -160,8 +173,12 @@ func parseListInput(c *gin.Context) (repo.ListInput, error) {
 		Cursor: c.Query("cursor"), PageSize: pageSize,
 		CustomerID: c.Query("customer_id"), StatusFilter: c.Query("status_filter"),
 		SourceOpportunityID: c.Query("source_opportunity_id"),
-		ViewMine:            c.Query("view") == "mine",
 	}
+	viewMine, err := parseView(c)
+	if err != nil {
+		return in, err
+	}
+	in.ViewMine = viewMine
 	for _, p := range []struct {
 		name string
 		dst  *time.Time
@@ -242,7 +259,8 @@ func calculatePriceDryRunHandler(svc *service.Service) gin.HandlerFunc {
 }
 
 // statsSummaryHandler：GET /stats/summary?period=week|month|quarter&view=dept|mine。
-// 不认识的 period 直接回 400；数据范围与 GET /orders 相同。
+// 不认识的 period / view 直接回 400；数据范围与 GET /orders 相同（view 二选一，
+// 不是 OR）。
 func statsSummaryHandler(svc *service.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		period := c.Query("period")
@@ -252,7 +270,12 @@ func statsSummaryHandler(svc *service.Service) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("period 只能是 week / month / quarter，实际 %q", period)})
 			return
 		}
-		st, err := svc.StatsSummary(c.Request.Context(), period, c.Query("view") == "mine")
+		viewMine, err := parseView(c)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		st, err := svc.StatsSummary(c.Request.Context(), period, viewMine)
 		if err != nil {
 			_ = c.Error(service.ToStatus(err))
 			return

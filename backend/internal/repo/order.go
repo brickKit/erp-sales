@@ -168,8 +168,8 @@ type ListInput struct {
 	// 负责把选中的那个拼进 WHERE——同一条 SQL 不会同时用两个（那样会把
 	// "本部门"缩窄成"本部门里我自己的"，不是设计要的两个独立视图）。
 	ViewMine    bool   // true："我的订单"（owner_id = ScopeOwner）；false（默认）："本部门及下级"（dept_path 前缀匹配）
-	ScopePrefix string // ViewMine=false 时用，来自 besdk.ScopeOf(ctx).Prefix
-	ScopeOwner  string // ViewMine=true 时用，来自 besdk.ScopeOf(ctx).Owner
+	ScopePrefix string // ViewMine=false 时用，来自 besdk.ScopeOf(ctx).Prefix；不能是空串
+	ScopeOwner  string // ViewMine=true 时用，来自 besdk.ScopeOf(ctx).Owner；不能是空串
 }
 
 type ListResult struct {
@@ -178,6 +178,9 @@ type ListResult struct {
 }
 
 func (r *Repo) ListOrders(ctx context.Context, in ListInput) (*ListResult, error) {
+	if err := checkViewScope(in.ViewMine, in.ScopePrefix, in.ScopeOwner); err != nil {
+		return nil, err
+	}
 	q := besdk.ListWindow(besdk.Query{
 		From: in.CreatedAfter, To: in.CreatedBefore, Cursor: in.Cursor, Limit: in.PageSize,
 	})
@@ -198,8 +201,8 @@ func (r *Repo) ListOrders(ctx context.Context, in ListInput) (*ListResult, error
 			args = append(args, in.ScopeOwner)
 			query += fmt.Sprintf(" AND owner_id = $%d", len(args))
 		} else {
-			// ScopePrefix 为空（部门树根节点）时 `LIKE '' || '%'` 等价于
-			// `LIKE '%'`，天然匹配全部，不需要特判。
+			// 无部门的调用者 ScopePrefix 是哨兵 besdk.NoDeptPath，不命中任何
+			// 行；"/" 是根标记，命中所有带部门的行。空串已被 checkViewScope 拒绝。
 			args = append(args, in.ScopePrefix)
 			query += fmt.Sprintf(" AND dept_path LIKE $%d || '%%'", len(args))
 		}

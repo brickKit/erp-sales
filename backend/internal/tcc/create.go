@@ -13,8 +13,8 @@ import (
 //
 // 这不是凭空发明的格式：dept_path 的来源（infra/authz 的部门表）就是按
 // `parentPath + 部门 id + "/"` 拼的，所以 "/1/12/" 的末段 "12" 恰好是这个部门
-// 自己的 id，不需要额外查一次或往 JWT 里加字段。dept_path 为空（根节点）时
-// dept_id 也是空——两者都表示"没有具体部门"，不用特判。
+// 自己的 id，不需要额外查一次或往 JWT 里加字段。dept_path 为空（建单人没有
+// 部门）或是根标记 "/" 时 dept_id 也是空——两者都表示"没有具体部门"。
 //
 // 只在本组件内联，不放进 be-sdk-go：现在只有这一个调用方，等出现第二个真的
 // 需要它的组件再提升成 SDK 函数。
@@ -81,9 +81,15 @@ func (o *Orchestrator) CreateOrder(ctx context.Context, idempotencyKey, customer
 	}
 
 	// dept_id/dept_path/owner_id 是创建时快照，取自调用者的 besdk.ScopeOf(ctx)。
+	// 没有部门的人（!HasDept）也能建单：dept_path / dept_id 留空串，这张单只对
+	// 他本人可见。Prefix 此时是 SDK 的哨兵，不能写进行里。
 	scope := besdk.ScopeOf(ctx)
+	deptPath := ""
+	if scope.HasDept {
+		deptPath = scope.Prefix
+	}
 	return o.Repo.CreateOrder(ctx, repo.CreateOrderInput{
 		IdempotencyKey: idempotencyKey, CustomerID: customerID, CustomerName: customer.Name, Items: createItems,
-		DeptID: leafDeptID(scope.Prefix), DeptPath: scope.Prefix, OwnerID: scope.Owner,
+		DeptID: leafDeptID(deptPath), DeptPath: deptPath, OwnerID: scope.Owner,
 	})
 }

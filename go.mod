@@ -3,7 +3,7 @@ module github.com/brickKit/erp-sales/v2
 go 1.25.11
 
 require (
-	github.com/brickKit/be-sdk-go v0.4.0
+	github.com/brickKit/be-sdk-go v0.5.0
 	github.com/brickKit/erp-finance/gen/erp/finance v1.0.10
 	github.com/brickKit/erp-inventory/gen/erp/inventory v1.0.14
 	github.com/brickKit/infra-workflow/gen/infra/workflow v1.0.3

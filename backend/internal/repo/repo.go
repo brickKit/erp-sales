@@ -36,11 +36,39 @@ var ErrForbidden = errors.New("无权访问该订单")
 // 组织最基本的两个视图）。两个操作数都来自调用者的真实范围
 // （besdk.ScopeOf），不能有一个取"不限"的缺省值。
 //
-// ⚠️ scopePrefix 为空时 strings.HasPrefix 对任何字符串都返回 true——
-// 坐在部门树根节点的人天然看见全部，不需要特判（同 ListOrders 的 SQL
-// 版本 `dept_path LIKE ” || '%'` 是同一件事的两种写法）。
+// 没有部门的调用者，SDK 给的 scopePrefix 是哨兵 besdk.NoDeptPath：它不以
+// "/" 开头，任何真实路径、空串都不以它开头，org 一侧自然落空，只剩 owner。
+// "/" 是整棵部门树的显式根标记，作为普通前缀命中所有带部门的单。SDK 保证
+// 两个操作数都不是空串；万一收到空串（调用方漏填），那一侧按不命中处理——
+// strings.HasPrefix(x, "") 恒为真，当成"不限"就是 fail-open。
 func (o *Order) InScope(scopePrefix, scopeOwner string) bool {
-	return strings.HasPrefix(o.DeptPath, scopePrefix) || o.OwnerID == scopeOwner
+	org := scopePrefix != "" && strings.HasPrefix(o.DeptPath, scopePrefix)
+	owner := scopeOwner != "" && o.OwnerID == scopeOwner
+	return org || owner
+}
+
+// checkViewScope 是 ListOrders / StatsSummary 共用的守卫：选中的那个视图的
+// 操作数（dept 视图的 ScopePrefix、mine 视图的 ScopeOwner）来自
+// besdk.ScopeOf，SDK 保证它不是空串。空串只能是调用方漏填了，报参数错误，
+// 不能当成"不限"（空前缀拼进 `dept_path LIKE $n || '%'` 就匹配整张表）。
+func checkViewScope(viewMine bool, scopePrefix, scopeOwner string) error {
+	if viewMine && scopeOwner == "" {
+		return fmt.Errorf("%w: mine 视图缺 ScopeOwner", ErrInvalidArgument)
+	}
+	if !viewMine && scopePrefix == "" {
+		return fmt.Errorf("%w: dept 视图缺 ScopePrefix", ErrInvalidArgument)
+	}
+	return nil
+}
+
+// checkDeptPathSnapshot 是建单快照的守卫：dept_path 要么是空串（建单人没有
+// 部门，这张单只对 owner 可见），要么是以 "/" 开头的真实路径。SDK 的"无部门"
+// 哨兵不以 "/" 开头，写进行里会被另一个无部门的人的 dept 视图前缀命中。
+func checkDeptPathSnapshot(deptPath string) error {
+	if deptPath != "" && !strings.HasPrefix(deptPath, "/") {
+		return fmt.Errorf("%w: dept_path 必须为空或以 / 开头，实际 %q", ErrInvalidArgument, deptPath)
+	}
+	return nil
 }
 
 type Repo struct {

@@ -15,8 +15,8 @@ type StatsInput struct {
 	Period      string    // week / month / quarter；空串等于 month
 	Now         time.Time // 统计截止时刻（调用方传 time.Now()，测试可固定）
 	ViewMine    bool
-	ScopePrefix string
-	ScopeOwner  string
+	ScopePrefix string // 同 ListInput.ScopePrefix：不能是空串
+	ScopeOwner  string // 同 ListInput.ScopeOwner：不能是空串
 }
 
 // DayStat 是 by_day 的一项。
@@ -50,6 +50,9 @@ const confirmedStatuses = `('CONFIRMED', 'SHIPPED', 'COMPLETED')`
 
 // StatsSummary 统计调用者数据范围内、窗口期内建的订单（按 created_at 归日，UTC）。
 func (r *Repo) StatsSummary(ctx context.Context, in StatsInput) (*Stats, error) {
+	if err := checkViewScope(in.ViewMine, in.ScopePrefix, in.ScopeOwner); err != nil {
+		return nil, err
+	}
 	period := in.Period
 	if period == "" {
 		period = "month"
