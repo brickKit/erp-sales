@@ -180,7 +180,7 @@ func (r *Repo) ListOrders(ctx context.Context, in ListInput) (*ListResult, error
 	if q.Cursor != "" {
 		decoded, err := decodeCursor(q.Cursor)
 		if err != nil {
-			return nil, fmt.Errorf("非法 cursor：%w", err)
+			return nil, fmt.Errorf("%w: 非法 cursor：%v", ErrInvalidArgument, err)
 		}
 		ck = &decoded
 	}
