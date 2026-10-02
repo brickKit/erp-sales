@@ -18,7 +18,11 @@ This component owns the sales order from quotation to shipment: the order and it
 | The approval and exception inbox | `infra/workflow` | The inbox holds no business rules: this component opens exception tasks and reacts to their completion |
 | Shipping execution, carriers, invoicing | nobody yet | `ShipOrder` only turns the reservation into an issue and the order into `SHIPPED` |
 
-**Order states.** `DRAFT` (a quotation and an order are the same row; converting one into the other would move numbers, lines and snapshots for nothing) → `CONFIRMED` → `SHIPPED`; `DRAFT` or `CONFIRMED` → `CANCELLED`; `SUSPENDED` from finance's credit rejection or from three failed compensations. `COMPLETED` and `CLOSED` exist in the status set with no command leading to them yet. `CANCELLED` is terminal and never revived: cancelling released a reservation in another process, and reviving would have to reserve again when the stock may be gone — compensation across a service boundary is not symmetric. A suspended order returns to `DRAFT` (not to "confirmed") when a person approves the compensation exception task: the confirmation never committed, so `DRAFT` is the only honest starting point, and confirming again is an explicit act by a person or caller. There is no `locked` flag; if one is ever needed, it is a boolean beside the state, not a state.
+**Order states.** `DRAFT` (a quotation and an order are the same row; converting one into the other would move numbers, lines and snapshots for nothing) → `CONFIRMED` → `SHIPPED`; `DRAFT` or `CONFIRMED` → `CANCELLED`; `SUSPENDED` from finance's credit rejection or from three failed compensations, and the two suspensions leave differently (below). `COMPLETED` and `CLOSED` exist in the status set with no command leading to them yet. `CANCELLED` is terminal and never revived: cancelling released a reservation in another process, and reviving would have to reserve again when the stock may be gone — compensation across a service boundary is not symmetric. A suspended order returns to `DRAFT` (not to "confirmed") when a person approves the compensation exception task: the confirmation never committed, so `DRAFT` is the only honest starting point, and confirming again is an explicit act by a person or caller. There is no `locked` flag; if one is ever needed, it is a boolean beside the state, not a state.
+
+**A credit rejection suspends a confirmed order, and cancelling is its way out.** `finance.credit.rejected.v1` comes after `sales.order.created.v1`, so the order is `CONFIRMED` and holds a reservation in `erp/inventory`. The local credit check knows the limit but not the exposure (see Open questions), so this is the ordinary end of an order over the customer's cumulative limit, not a corner case. The order becomes `SUSPENDED`, and an exception task goes to the order's owner, who knows the customer and is in scope to cancel it (falling back to `EXCEPTION_ASSIGNEE_SUB` when an order has no owner; idempotency key derived from the order, so the event seen twice opens one task). `CancelOrder` accepts such an order: it releases the reservation through inventory, then cancels, and `sales.order.cancelled.v1` lets finance reverse the receivable. Without that, nothing could ever release the stock: shipping needs `CONFIRMED`, and approving a task resumes only a compensation suspension. Approving this task does nothing by itself; resuming a rejected order after the limit is raised is not built (Open questions). An order suspended after three failed compensations is different: its confirmation never committed, it has no `reservation_id`, and only the person working on its task knows which reservation leaked, so `CancelOrder` refuses it; the task's approval returns it to `DRAFT`. The two are told apart by `suspended_reason`, as `ResumeFromExceptionTx` already does.
+
+**A shipped order is never suspended.** The stock has left; suspending it would stop nothing, and no command leads from `SUSPENDED` back to anything after shipping, so the order would only be hidden. A rejection for a `SHIPPED` order leaves it as it is, logs a WARN and opens an exception task for the owner: the goods are out and the receivable exceeds the limit, which is for a person to follow up. Terminal orders are left alone as before.
 
 ## Owned data
 
@@ -44,7 +48,7 @@ gRPC `erp.sales.v1.SalesService`:
 |---|---|---|
 | `CreateOrder` | write | idempotent; creates `DRAFT`, reserves nothing |
 | `ConfirmOrder` | write | idempotent; the TCC chain below |
-| `CancelOrder` | write | idempotent; releases the reservation of a confirmed order; cancelling a cancelled order returns it unchanged |
+| `CancelOrder` | write | idempotent; releases the reservation of a confirmed order, or of one suspended by finance's credit rejection; refuses an order suspended by failed compensations; cancelling a cancelled order returns it unchanged |
 | `ShipOrder` | write | idempotent; `ConfirmIssue` in inventory, then `SHIPPED` |
 | `CalculatePriceDryRun` | read | pure: the same pricing as `CreateOrder`, nothing stored |
 | `GetOrder`, `ListOrders` | read | data-scoped; cursor paging, default window the last 90 days |
@@ -91,7 +95,7 @@ Consumed:
 
 | Subject | From | Effect |
 |---|---|---|
-| `finance.credit.rejected.v1` | `erp/finance` | the order becomes `SUSPENDED` with the exposure and limit in the reason; terminal orders are left alone |
+| `finance.credit.rejected.v1` | `erp/finance` | the order becomes `SUSPENDED` with the exposure and limit in the reason, and an exception task goes to its owner; a `SHIPPED` order is not suspended (WARN and the same task); terminal orders are left alone |
 | `mdm.customer.created.v1`, `.updated.v1` | `mdm/customer` | the credit limit copy; strictly increasing `version`; an update without `credit_limit` keeps the limit; an invalid limit rejects the event |
 | `infra.workflow.task.completed.v1` | `infra/workflow` | only `source_component = erp/sales`, `source_aggregate = sales_order`, `action = APPROVED`: a suspended order whose reason is the compensation failure returns to `DRAFT`. `REJECTED` does nothing (its meaning for an exception is unclear); this component never calls `CloseTask` |
 | `crm.opportunity.won.v1` | `crm/opportunity` | create and confirm an order (below) |
@@ -107,7 +111,7 @@ Consumed:
 | `mdm/customer` | `BatchGet`: active customer, name snapshot | create, confirm |
 | `mdm/product` | `BatchGet`: active products, SKU / name / unit / category snapshot | create, confirm |
 | `erp/inventory` | `Reserve`, `GetReservationStatus`, `CancelReservation`, `ConfirmIssue` | confirm, cancel, ship |
-| `infra/workflow` (optional) | `CreateTask` for exception tasks | compensation, won-opportunity conversion |
+| `infra/workflow` (optional) | `CreateTask` for exception tasks | compensation, won-opportunity conversion, credit rejection |
 
 When `infra/workflow` is absent the platform injects no address at all; the component checks `rt.Config.Endpoint` and skips the task (the order is still suspended, the failure logged). On a user request every call forwards the caller's token; only the event handler uses the system identity (`make gates` scans for `SystemClient` on request paths).
 
@@ -154,6 +158,7 @@ Lists and statistics choose one view with `view` (`dept` by default, or `mine`; 
 |---|---|
 | The local credit check knows the limit but not the exposure (`credit_exposure` stays `0`): `finance.voucher.posted.v1` has no customer ID, and there is no reconciliation with `erp/finance` | The authoritative decision is finance's `finance.credit.rejected.v1`, which suspends the order afterwards. Period checks before changing a historical order, or a reconciliation call, would bring back a synchronous edge to `erp/finance`; that is a new design decision, not a gap to fill |
 | Rows in `sales_order_reconciliation_queue` are written, but nothing reads them | The caller gets `503` and retries with the same key, which settles the order; a reconciliation job is not built |
+| An order suspended by finance's credit rejection cannot be resumed, even after the limit is raised | The owner cancels it (which releases the stock) and enters it again. Resuming needs to know that the exposure is back under the limit, which only finance knows; that is an event or a call this component does not have |
 | `ShipOrder`: `ConfirmIssue` succeeded, the local `SHIPPED` failed | The order stays `CONFIRMED` while the stock is issued; a retry with the same key completes it (both sides are idempotent). Nothing does it automatically |
 | `GetOrder` / `ListOrders` over gRPC need the caller's claims, which the gRPC server side of be-sdk-go does not establish | Such calls fail with an internal error; users read through REST. `BatchGetOrder` and `GetOrderStatus` have no scope by design (component protocols) |
 | `COMPLETED` / `CLOSED` have no command; no invoicing | Not needed by any screen yet; invoicing is a slot-family choice (see above) |

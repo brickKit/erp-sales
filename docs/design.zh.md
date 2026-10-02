@@ -18,7 +18,11 @@
 | 审批与异常待办箱 | `infra/workflow` | 待办箱里没有业务规则：本组件在那里开异常待办，并对待办完成作出反应 |
 | 发运执行、承运商、开票 | 目前没有组件负责 | `ShipOrder` 只把预留转成出库、把订单转成 `SHIPPED` |
 
-**订单状态。** `DRAFT`（报价和订单是同一行；报价转订单若换表，单号、行、快照全要白搬一遍）→ `CONFIRMED` → `SHIPPED`；`DRAFT` 或 `CONFIRMED` → `CANCELLED`；财务否决信用或补偿连续失败三次 → `SUSPENDED`。状态集里有 `COMPLETED` 与 `CLOSED`，但还没有命令能走到它们。`CANCELLED` 是终态，绝不复活：取消时已经在另一个进程里释放了预留，复活就得重新预留，而那时库存可能已被别人占走——跨服务边界的补偿是不对称的。挂起的订单在有人同意补偿异常待办后回到 `DRAFT`（不是"已确认"）：确认从未提交成功，`DRAFT` 是唯一诚实的起点，再次确认要由人或调用方显式发起。没有 `locked` 标志；将来真需要时，是状态之外的一个布尔，不是一个状态。
+**订单状态。** `DRAFT`（报价和订单是同一行；报价转订单若换表，单号、行、快照全要白搬一遍）→ `CONFIRMED` → `SHIPPED`；`DRAFT` 或 `CONFIRMED` → `CANCELLED`；财务否决信用或补偿连续失败三次 → `SUSPENDED`，两种挂起的出路不同（见下）。状态集里有 `COMPLETED` 与 `CLOSED`，但还没有命令能走到它们。`CANCELLED` 是终态，绝不复活：取消时已经在另一个进程里释放了预留，复活就得重新预留，而那时库存可能已被别人占走——跨服务边界的补偿是不对称的。挂起的订单在有人同意补偿异常待办后回到 `DRAFT`（不是"已确认"）：确认从未提交成功，`DRAFT` 是唯一诚实的起点，再次确认要由人或调用方显式发起。没有 `locked` 标志；将来真需要时，是状态之外的一个布尔，不是一个状态。
+
+**信用被拒挂起的是已确认的订单，取消是它的出路。** `finance.credit.rejected.v1` 在 `sales.order.created.v1` 之后才到，订单已经 `CONFIRMED`，在 `erp/inventory` 占着预留。本地信用校验知道额度、不知道已用额度（见未决问题），所以这是超出客户累计额度的订单的常规结局，不是角落。订单转 `SUSPENDED`，并给订单负责人开一条异常待办：他认识这个客户，也在范围内能取消这张单（订单没有负责人时退回 `EXCEPTION_ASSIGNEE_SUB`；幂等键由订单派生，事件来两次也只有一条待办）。`CancelOrder` 接受这样的订单：先经库存释放预留，再取消，`sales.order.cancelled.v1` 让财务冲回应收。没有这条路，那份库存永远放不掉：发货要 `CONFIRMED`，待办被同意只恢复补偿挂起的单。同意这条待办本身什么都不做；额度调高后让被拒的单恢复，没有做（未决问题）。补偿连续失败三次挂起的单不一样：它的确认从没提交、没有 `reservation_id`，泄漏的是哪份预留只有处理它待办的人知道，所以 `CancelOrder` 拒绝它；待办被同意后它回到 `DRAFT`。两者靠 `suspended_reason` 区分，与 `ResumeFromExceptionTx` 一样。
+
+**已发货的订单绝不挂起。** 库存已经出去了；挂起拦不住什么，也没有命令能从 `SUSPENDED` 走回发货之后的任何状态，只会把这张单藏起来。对 `SHIPPED` 订单的拒绝不改它，记一条 WARN，给负责人开一条异常待办：货已出、应收超了额度，这要人跟进。终态订单照旧不动。
 
 ## 拥有的数据
 
@@ -44,7 +48,7 @@ gRPC `erp.sales.v1.SalesService`：
 |---|---|---|
 | `CreateOrder` | 写 | 幂等；建 `DRAFT`，不预留 |
 | `ConfirmOrder` | 写 | 幂等；即下面的 TCC 链 |
-| `CancelOrder` | 写 | 幂等；已确认的订单释放其预留；对已取消的订单再取消，原样返回 |
+| `CancelOrder` | 写 | 幂等；已确认的、或被财务拒绝信用而挂起的订单释放其预留；补偿失败挂起的订单拒绝；对已取消的订单再取消，原样返回 |
 | `ShipOrder` | 写 | 幂等；库存那边 `ConfirmIssue`，然后 `SHIPPED` |
 | `CalculatePriceDryRun` | 读 | 纯计算：定价与 `CreateOrder` 相同，什么都不存 |
 | `GetOrder`、`ListOrders` | 读 | 带数据范围；游标分页，默认窗口最近 90 天 |
@@ -91,7 +95,7 @@ REST 前缀 `/erp/sales`，每条路由都带 `assembly.yaml` 里的键：`GET /
 
 | Subject | 来自 | 作用 |
 |---|---|---|
-| `finance.credit.rejected.v1` | `erp/finance` | 订单转 `SUSPENDED`，原因里带已用额度与额度；终态订单不动 |
+| `finance.credit.rejected.v1` | `erp/finance` | 订单转 `SUSPENDED`，原因里带已用额度与额度，并给负责人开异常待办；`SHIPPED` 的订单不挂起（WARN 加同样的待办）；终态订单不动 |
 | `mdm.customer.created.v1`、`.updated.v1` | `mdm/customer` | 信用额度副本；`version` 严格递增；没带 `credit_limit` 的更新保留原额度；额度不合法的事件整条拒绝 |
 | `infra.workflow.task.completed.v1` | `infra/workflow` | 只认 `source_component = erp/sales`、`source_aggregate = sales_order`、`action = APPROVED`：原因是补偿失败的挂起订单回到 `DRAFT`。`REJECTED` 什么都不做（对异常待办的含义不明确）；本组件从不调 `CloseTask` |
 | `crm.opportunity.won.v1` | `crm/opportunity` | 建单并确认（见下） |
@@ -107,7 +111,7 @@ REST 前缀 `/erp/sales`，每条路由都带 `assembly.yaml` 里的键：`GET /
 | `mdm/customer` | `BatchGet`：客户启用、名称快照 | 建单、确认 |
 | `mdm/product` | `BatchGet`：产品启用、SKU / 名称 / 单位 / 分类快照 | 建单、确认 |
 | `erp/inventory` | `Reserve`、`GetReservationStatus`、`CancelReservation`、`ConfirmIssue` | 确认、取消、发货 |
-| `infra/workflow`（可选） | `CreateTask` 开异常待办 | 补偿、赢单转单 |
+| `infra/workflow`（可选） | `CreateTask` 开异常待办 | 补偿、赢单转单、信用被拒 |
 
 `infra/workflow` 缺席时平台根本不注入它的地址；组件用 `rt.Config.Endpoint` 判断后跳过开待办（订单照样挂起，失败写进日志）。用户请求上的每次调用都透传调用者的 token；只有事件 handler 用系统身份（`make gates` 扫描请求路径上的 `SystemClient`）。
 
@@ -154,6 +158,7 @@ REST 前缀 `/erp/sales`，每条路由都带 `assembly.yaml` 里的键：`GET /
 |---|---|
 | 本地信用校验知道额度、不知道已用额度（`credit_exposure` 一直是 `0`）：`finance.voucher.posted.v1` 没有客户 ID，与 `erp/finance` 之间也没有对账 | 权威判定是财务的 `finance.credit.rejected.v1`，事后把订单挂起。改历史订单前的期间检查、对账调用都会带回一条到 `erp/finance` 的同步边；那是一个新的设计决定，不是遗漏 |
 | `sales_order_reconciliation_queue` 有行写入，但没人读 | 调用方收到 `503` 后带同一个键重试，订单就能落定；对账任务没做 |
+| 被财务拒绝信用挂起的订单不能恢复，额度调高了也不能 | 负责人取消它（同时释放库存）再重新录入。恢复要知道已用额度回到了额度之内，这只有财务知道；那是本组件没有的一条事件或一次调用 |
 | `ShipOrder`：`ConfirmIssue` 成功了，本地 `SHIPPED` 却失败 | 订单停在 `CONFIRMED`，库存已出；带同一个键重试即可补完（两边都幂等）。没有自动补完 |
 | gRPC 的 `GetOrder` / `ListOrders` 需要调用者的 Claims，而 be-sdk-go 的 gRPC 服务端不建立它 | 这类调用以内部错误失败；用户经 REST 读。`BatchGetOrder` 与 `GetOrderStatus` 按设计不带范围（组件间协议） |
 | `COMPLETED` / `CLOSED` 没有命令；没有开票 | 还没有页面需要；开票属于槽位族里的选择（见上） |

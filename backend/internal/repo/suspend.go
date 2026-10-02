@@ -14,33 +14,56 @@ import (
 // 依据。
 const ExceptionReasonCompensationFailed = "补偿连续失败 3 次，需要人工介入"
 
+// SuspendOutcome 是 SuspendOrderTx 对这张订单做了什么。
+type SuspendOutcome int
+
+const (
+	// Suspended：订单现在是 SUSPENDED（刚转过去，或本来就是、reason 已更新）。
+	Suspended SuspendOutcome = iota
+	// SuspendIgnoredTerminal：终态（COMPLETED/CANCELLED/CLOSED），没动。
+	SuspendIgnoredTerminal
+	// SuspendIgnoredShipped：已经发货，没动。
+	SuspendIgnoredShipped
+)
+
 // SuspendOrderTx 把订单转 SUSPENDED：权威额度判定
 // 超限（消费 finance.credit.rejected.v1）或补偿连续失败 3 次都走这里。
 // 供事件消费路径直接调用，接 *sql.Tx（不自己开事务，理由同 snapshot.go）。
 //
 // 已经是终态（COMPLETED/CANCELLED/CLOSED）的订单不再转 SUSPENDED——
 // 终态之后的事实不该被一个异步到达的信用判定倒着改（CANCELLED 尤其
-// 不能复活或转移）。已经是 SUSPENDED 的再收到一次是
-// 幂等的，更新 reason 但不报错。
-func SuspendOrderTx(ctx context.Context, tx *sql.Tx, orderID int64, reason string) error {
+// 不能复活或转移）。已经发货（SHIPPED）的也不动：库存已经出库，挂起它
+// 既拦不住货、也没有任何命令能从 SUSPENDED 走回发货之后的状态，只会把一张
+// 已发货的单藏起来；调用方据 SuspendIgnoredShipped 去告诉人。已经是
+// SUSPENDED 的再收到一次是幂等的，更新 reason 但不报错。
+func SuspendOrderTx(ctx context.Context, tx *sql.Tx, orderID int64, reason string) (SuspendOutcome, error) {
 	var current string
 	err := tx.QueryRowContext(ctx, `SELECT status FROM sales_orders WHERE id = $1 FOR UPDATE`, orderID).Scan(&current)
 	if err == sql.ErrNoRows {
-		return fmt.Errorf("%w: order id=%d", ErrNotFound, orderID)
+		return 0, fmt.Errorf("%w: order id=%d", ErrNotFound, orderID)
 	}
 	if err != nil {
-		return fmt.Errorf("查 sales_orders: %w", err)
+		return 0, fmt.Errorf("查 sales_orders: %w", err)
 	}
 	switch current {
 	case StatusCompleted, StatusCancelled, StatusClosed:
-		return nil // 终态不可再流转，静默忽略——不是错误，是设计的边界
+		return SuspendIgnoredTerminal, nil // 终态不可再流转，静默忽略——不是错误，是设计的边界
+	case StatusShipped:
+		return SuspendIgnoredShipped, nil
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE sales_orders SET status = $1, suspended_reason = $2, version = version + 1, updated_at = now()
 		WHERE id = $3`, StatusSuspended, reason, orderID); err != nil {
-		return fmt.Errorf("更新 sales_orders: %w", err)
+		return 0, fmt.Errorf("更新 sales_orders: %w", err)
 	}
-	return nil
+	return Suspended, nil
+}
+
+// SuspendedByCompensation 报告这张单是不是因补偿连续失败挂起的：确认从没提交，
+// 没有 reservation_id，它占着的那份预留只有异常待办的处理人知道怎么释放，所以
+// 不能直接取消（见 tcc.CancelOrder）。
+func (o *Order) SuspendedByCompensation() bool {
+	return o.Status == StatusSuspended && o.SuspendedReason == ExceptionReasonCompensationFailed
 }
 
 // IncrementCompensationAttemptsTx 累加补偿失败计数，连续失败 3 次转
@@ -53,7 +76,7 @@ func IncrementCompensationAttemptsTx(ctx context.Context, tx *sql.Tx, orderID in
 		return 0, fmt.Errorf("更新 sales_orders: %w", err)
 	}
 	if attempts >= 3 {
-		if err := SuspendOrderTx(ctx, tx, orderID, ExceptionReasonCompensationFailed); err != nil {
+		if _, err := SuspendOrderTx(ctx, tx, orderID, ExceptionReasonCompensationFailed); err != nil {
 			return attempts, err
 		}
 	}

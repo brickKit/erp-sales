@@ -11,7 +11,7 @@
 | `backend/module/module.go` | 唯一入口 `New(ctx, rt)`：读配置（`readConfig`；schema 是 `PG_SCHEMA`，角色是 `PG_USER`），装配 repo → 编排器 → service → HTTP + gRPC，启动 Outbox 推送、两个分区循环与消费者。独立运行与进外壳同一个函数 |
 | `backend/cmd/server/main.go` | 一行 `besdk.RunStandalone(module.New)` |
 | `backend/cmd/migrate/main.go` | 一行 `migrate.Main(migrations.FS)`：迁移容器的入口（`./migrate up`） |
-| `backend/internal/tcc/` | 跨组件编排：`confirm.go`（预留、超时后查状态、补偿、挂起与异常待办）、`create.go`、`cancel.go`、`ship.go`、`opportunity_won.go`（赢单商机 → 已确认订单，系统身份）、`loglevel.go`（`FailureLevel`） |
+| `backend/internal/tcc/` | 跨组件编排：`confirm.go`（预留、超时后查状态、补偿、挂起与异常待办）、`create.go`、`cancel.go`、`ship.go`、`opportunity_won.go`（赢单商机 → 已确认订单，系统身份）、`credit_rejected.go`（财务拒绝信用之后的异常待办）、`loglevel.go`（`FailureLevel`） |
 | `backend/internal/client/client.go` | 拨号到四个依赖：`Customer`、`Product`、`Inventory`、`Workflow` 透传调用者 token；`*System` 一组只给事件 handler 用 |
 | `backend/internal/repo/write.go` | 本地写：`CreateOrder` 与各个 `Finalize*` 步骤；每个都在一个事务里做 幂等声明 → 锁行核对状态 → 写 → Outbox |
 | `backend/internal/repo/order.go` | 订单类型与状态、`GetOrder`、`ListOrders`（范围、过滤、keyset 分页）、`BatchGetOrder`、`GetOrderStatus` |
@@ -83,6 +83,7 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw
 | 赢单路径复用 `CreateOrder` / `ConfirmOrder` | 事件 handler 里 `besdk.ScopeOf` panic：没有 Claims | `createOrderForOpportunity` / `confirmOrderForOpportunity` 的归属取自事件 |
 | 让 `opportunityWonHandler` 返回 error，指望重投 | 这条赢单事件再也不会出现 | `besdk.Consume` 走 NATS 核心订阅：handler 报错只记日志，不重投 |
 | 先判订单状态、或先调依赖，再查命令的幂等键 | 成功过的确认、发货，每次重放都答 `400`（"不是草稿"）；第二次 `make seed` 死掉；同一个赢单商机来两次开一条假的异常待办 | 每个编排的第一步是 `Repo.ReplayCommand`，返回第一次的结果；键被别的命令或别的订单用过答 `400` |
+| 一律拒绝取消 `SUSPENDED` 的订单，或把 `SHIPPED` 的订单挂起 | 被财务拒绝信用挂起的订单在 `erp/inventory` 永远占着预留，因为没有命令能离开这个状态；已发货的单掉进一个没有出口的状态 | `CancelOrder` 只拒绝 `SuspendedByCompensation()`；`SuspendOrderTx` 不动 `SHIPPED`，handler 开待办 |
 | 只按 `status == SUSPENDED` 恢复挂起的订单 | 被财务信用否决挂起的订单，被一条无关的待办完成事件拉回 `DRAFT` | `ResumeFromExceptionTx` 精确匹配 `suspended_reason` |
 | 处理每一条 `infra.workflow.task.completed.v1` | 别的组件的待办 ID 被当成订单 ID | 这个 subject 全平台共用；按 `source_component` / `source_aggregate` 过滤 |
 | 用 `strconv.ParseFloat` 解析金额或数量，或不校验就落库 | `"NaN"` 进了 `NUMERIC` 列，排在一切数字之上，`CHECK (qty > 0)` 与每一个比较都放它过去；`0.1 + 0.2` 舍入到错的一分 | `validateQty` 与 `creditLimitPattern` 只认普通十进制写法；运算走 `backend/internal/decimal` |

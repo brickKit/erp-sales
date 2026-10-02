@@ -62,7 +62,17 @@ type creditRejectedPayload struct {
 	Limit      string `json:"limit"`
 }
 
-func creditRejectedHandler(_ *tcc.Orchestrator, _ *slog.Logger) func(context.Context, *sql.Tx, besdk.Event) error {
+// creditRejectedHandler：财务的权威额度判定超限。这条事件在 sales.order.created.v1
+// 之后才到，订单通常已经 CONFIRMED、占着预留：
+//   - 挂起它（SUSPENDED），并给订单负责人开一条异常待办——挂起的单占着库存，
+//     出路是取消（tcc.CancelOrder 会先释放预留），得有人知道这件事；
+//   - 已经发货的单不挂起（库存已出库，挂起拦不住什么），记一条 Warn，同样开待办：
+//     货已经出去了，额度超了这件事要人跟进；
+//   - 终态的单不动。
+//
+// 开待办是尽力而为（workflow 缺席或失败只记日志），不让 inbox 事务失败：订单的
+// 状态才是这条事件必须落下的结果。
+func creditRejectedHandler(orch *tcc.Orchestrator, logger *slog.Logger) func(context.Context, *sql.Tx, besdk.Event) error {
 	return func(ctx context.Context, tx *sql.Tx, ev besdk.Event) error {
 		var p creditRejectedPayload
 		if err := json.Unmarshal(ev.Payload, &p); err != nil {
@@ -72,8 +82,22 @@ func creditRejectedHandler(_ *tcc.Orchestrator, _ *slog.Logger) func(context.Con
 		if err != nil {
 			return fmt.Errorf("解析 order_id: %w", err)
 		}
-		return repo.SuspendOrderTx(ctx, tx, orderID,
+		outcome, err := repo.SuspendOrderTx(ctx, tx, orderID,
 			fmt.Sprintf("权威额度超限：已用 %s，额度 %s", p.Exposure, p.Limit))
+		if err != nil || outcome == repo.SuspendIgnoredTerminal {
+			return err
+		}
+		order, err := repo.GetOrderTx(ctx, tx, p.OrderID)
+		if err != nil {
+			return err
+		}
+		shipped := outcome == repo.SuspendIgnoredShipped
+		if shipped {
+			logger.Warn("财务拒绝了一张已发货订单的信用，订单不挂起，转人工跟进",
+				"order_id", p.OrderID, "exposure", p.Exposure, "limit", p.Limit)
+		}
+		orch.OpenCreditRejectedTask(ctx, order, p.Exposure, p.Limit, shipped, logger)
+		return nil
 	}
 }
 

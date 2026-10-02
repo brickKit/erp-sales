@@ -57,6 +57,11 @@ type Order struct {
 	UpdatedAt            time.Time
 }
 
+// GetOrderTx 在调用方的事务里读一张订单（事件 handler 用：它拿到的是 inbox 事务）。
+func GetOrderTx(ctx context.Context, tx *sql.Tx, id string) (*Order, error) {
+	return getOrderTx(ctx, tx, id)
+}
+
 func getOrderTx(ctx context.Context, tx *sql.Tx, id string) (*Order, error) {
 	orderID, err := parseID("id", id)
 	if err != nil {

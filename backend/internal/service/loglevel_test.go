@@ -97,7 +97,8 @@ func TestCommandLogLevel_调用方的错误不记ERROR(t *testing.T) {
 	// 补偿挂起的单不能取消（FailedPrecondition → 400）
 	suspended := newOrder()
 	if err := besdk.WithTx(ctx, db, "erp_sales_rw", "erp_sales", func(tx *sql.Tx) error {
-		return repo.SuspendOrderTx(ctx, tx, mustID(t, suspended.ID), repo.ExceptionReasonCompensationFailed)
+		_, err := repo.SuspendOrderTx(ctx, tx, mustID(t, suspended.ID), repo.ExceptionReasonCompensationFailed)
+		return err
 	}); err != nil {
 		t.Fatal(err)
 	}

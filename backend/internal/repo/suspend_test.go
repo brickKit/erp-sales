@@ -123,7 +123,8 @@ func TestResumeFromExceptionTx_reason不匹配时不恢复(t *testing.T) {
 	order := createDraftOrderForSuspendTest(t, db)
 
 	err := besdk.WithTx(ctx, db, "erp_sales_rw", "erp_sales", func(tx *sql.Tx) error {
-		return SuspendOrderTx(ctx, tx, mustParseID(t, order.ID), "权威额度超限：已用 90000.00，额度 50000.00")
+		_, err := SuspendOrderTx(ctx, tx, mustParseID(t, order.ID), "权威额度超限：已用 90000.00，额度 50000.00")
+		return err
 	})
 	if err != nil {
 		t.Fatal(err)

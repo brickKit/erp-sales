@@ -226,7 +226,7 @@ func buildOrderCreatedPayload(o *Order) ([]byte, error) {
 	})
 }
 
-// ── FinalizeCancel：DRAFT/CONFIRMED → CANCELLED（CANCELLED 是终态，
+// ── FinalizeCancel：DRAFT/CONFIRMED/SUSPENDED（财务拒绝信用的）→ CANCELLED（CANCELLED 是终态，
 // 不能复活）。tcc 包已经在调用这个函数之前把
 // erp-inventory.CancelReservation（CONFIRMED 的情形才需要）做完 ──
 
@@ -256,16 +256,22 @@ func (r *Repo) FinalizeCancel(ctx context.Context, in FinalizeCancelInput) (*Ord
 			return err
 		}
 
-		var status string
+		var status, reason string
 		if err := tx.QueryRowContext(ctx,
-			`SELECT status FROM sales_orders WHERE id = $1 FOR UPDATE`, orderID,
-		).Scan(&status); err != nil {
+			`SELECT status, suspended_reason FROM sales_orders WHERE id = $1 FOR UPDATE`, orderID,
+		).Scan(&status, &reason); err != nil {
 			if err == sql.ErrNoRows {
 				return fmt.Errorf("%w: order id=%s", ErrNotFound, in.OrderID)
 			}
 			return fmt.Errorf("查 sales_orders: %w", err)
 		}
 		switch status {
+		case StatusSuspended:
+			// 只有财务拒绝信用挂起的单能取消（预留 tcc 已释放）；补偿挂起的不行，
+			// 见 Order.SuspendedByCompensation。锁行之后再判一次，不信调用方读到的旧值。
+			if reason == ExceptionReasonCompensationFailed {
+				return fmt.Errorf("%w: order id=%s 因补偿连续失败挂起，不能直接取消", ErrOrderNotDraft, in.OrderID)
+			}
 		case StatusCancelled:
 			// 已经是 CANCELLED：幂等，如实返回当前状态，不重复发事件
 			// （同 erp-inventory CancelReservation 的"状态内省"判据）。
