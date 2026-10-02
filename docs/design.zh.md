@@ -69,7 +69,7 @@ REST 前缀 `/erp/sales`，每条路由都带 `assembly.yaml` 里的键：`GET /
 
 **统计**（`GET /stats/summary`）：最近 7 / 30 / 90 个自然日（含今天，UTC），按订单的 `created_at` 归日。`order_count` 数窗口里建的全部订单；`confirmed_count` 与 `total_amount` 只算 `CONFIRMED`、`SHIPPED`、`COMPLETED`；`by_day` 列出每一天（含零单的日子），`by_status` 列出全部七个状态。数据范围与 `GET /orders` 完全相同，含 `view`。
 
-**错误与日志**：输入不合法、状态不对、库存不足、超额度是 `400`；订单不在范围内 `403`；不存在 `404`；预留状态未知 `503`。这类调用方的错误记 INFO，暂时性的记 WARN；ERROR 只留给运维必须处理的事（依赖不可达、数据库出错、订单被挂起）。
+**错误与日志**：输入不合法、状态不对、库存不足、超额度是 `400`；不存在 `404`，读一张不在范围内的订单也是 `404`、文案一字不差，数据范围不泄露订单是否存在；对范围外订单的命令（确认、取消、发货）`403`；预留状态未知 `503`。这类调用方的错误记 INFO，暂时性的记 WARN；ERROR 只留给运维必须处理的事（依赖不可达、数据库出错、订单被挂起）。
 
 ## 发布与消费的事件
 
@@ -103,7 +103,6 @@ REST 前缀 `/erp/sales`，每条路由都带 `assembly.yaml` 里的键：`GET /
 | `mdm/customer` | `BatchGet`：客户启用、名称快照 | 建单、确认 |
 | `mdm/product` | `BatchGet`：产品启用、SKU / 名称 / 单位 / 分类快照 | 建单、确认 |
 | `erp/inventory` | `Reserve`、`GetReservationStatus`、`CancelReservation`、`ConfirmIssue` | 确认、取消、发货 |
-| `erp/finance` | 声明了；这个版本没有同步调用 | — |
 | `infra/workflow`（可选） | `CreateTask` 开异常待办 | 补偿、赢单转单 |
 
 `infra/workflow` 缺席时平台根本不注入它的地址；组件用 `rt.Config.Endpoint` 判断后跳过开待办（订单照样挂起，失败写进日志）。用户请求上的每次调用都透传调用者的 token；只有事件 handler 用系统身份（`make gates` 扫描请求路径上的 `SystemClient`）。
@@ -111,11 +110,12 @@ REST 前缀 `/erp/sales`，每条路由都带 `assembly.yaml` 里的键：`GET /
 | 不是依赖 | 为什么 |
 |---|---|
 | `crm/opportunity` | CRM 与 ERP 之间没有同步边；赢单商机以事件到达，订单 ID 以事件回去 |
+| `erp/finance` | 本组件不调用它：财务消费 `sales.order.created.v1`，以 `finance.credit.rejected.v1` 回告。一条没有调用的边只会让本组件每次运行都把财务也带起来 |
 | `infra/iam-casdoor`、`infra/authz` | token 与权限包从配置里的 URL 来 |
 
 ## 在同步调用图里的位置
 
-根节点：出边指向 `mdm/customer`、`mdm/product`、`erp/inventory`（以及声明了的 `erp/finance` 与可选的 `infra/workflow`），它们都不回调，所以没有路径能回到这里。入边来自用户（REST）与别的组件的读（`BatchGetOrder`、`GetOrderStatus`）。它从不指向任何 CRM 组件。
+根节点：出边指向 `mdm/customer`、`mdm/product`、`erp/inventory` 与可选的 `infra/workflow`，它们都不回调，所以没有路径能回到这里。入边来自用户（REST）与别的组件的读（`BatchGetOrder`、`GetOrderStatus`）。它从不指向任何 CRM 组件。
 
 ## 分区与归档
 
@@ -127,7 +127,9 @@ REST 前缀 `/erp/sales`，每条路由都带 `assembly.yaml` 里的键：`GET /
 
 `sales_orders` 上两个维度：`org`（`dept_path` 前缀）与 `owner`（`owner_id` 等于调用者），即销售组织最基本的两个视图"本部门及下级"与"我的订单"。范围列是创建时的快照，不是去查这个人现在在哪个部门；否则销售换了部门，他以前的订单会跟着走，每一张报表都悄悄变数。
 
-列表与统计用 `view` 选一个视图（默认 `dept`，或 `mine`），绝不取交集（那会把"本部门"缩窄成"本部门里我自己的"）。单张订单（查看、确认、取消、发货）两者任一命中即可见。两个操作数始终来自调用者的真实范围（`besdk.ScopeOf`）：部门路径为空表示调用者在部门树根节点、看得到全部，这是 SDK 的定义。范围下推进 SQL 的 `WHERE`，从不在 Go 里事后过滤（否则分页就乱了）。赢单转成的订单，负责人与部门取自事件。
+列表与统计用 `view` 选一个视图（默认 `dept`，或 `mine`；其它取值 `400`，拼错的 `mine` 不会悄悄变成看全部门），绝不取交集或并集（交集会把"本部门"缩窄成"本部门里我自己的"）。单张订单（查看、确认、取消、发货）两者任一命中即可见；范围外的读答 `404`，就像这张单不存在，命令答 `403`。两个操作数始终来自调用者的真实范围（`besdk.ScopeOf`），哪一个都不能缺省成"全部"。范围下推进 SQL 的 `WHERE`，从不在 Go 里事后过滤（否则分页就乱了）。赢单转成的订单，负责人与部门取自事件。
+
+**没有部门的调用者**（token 的 `dept_path` 为空：还没被放进组织的新账号）什么 `org` 行都不命中：SDK 给的部门前缀是任何真实路径都不以它开头的值。他的 `dept` 视图是空列表、统计为零；单张订单只有他是负责人时才可见。他仍然可以建单：快照里的 `dept_path` 与 `dept_id` 为空，这张单只对负责人可见（谁的部门前缀都不命中空路径，根部门也不例外）。SDK 的"无部门"值从不写进行里；仓储层拒绝既不为空、也不以 `/` 开头的 `dept_path`。要看全公司，就坐在根部门里，或持有显式的根标记 `/`，它作为前缀命中所有带部门的订单。仓储层把空前缀或空负责人当成调用方的错误（`InvalidArgument`），绝不当成"不限"。
 
 ## 参考实现
 
@@ -146,7 +148,7 @@ REST 前缀 `/erp/sales`，每条路由都带 `assembly.yaml` 里的键：`GET /
 
 | 问题 | 目前的答案 |
 |---|---|
-| `erp/finance` 是声明了却没有调用的依赖：改历史订单前的期间检查、对账用的 `BatchGetCreditExposure` 都规划过，但没做 | 本地信用校验只看额度（`credit_exposure` 一直是 `0`）；权威判定是财务的 `finance.credit.rejected.v1`。是补上对账还是去掉这条边，设计上仍待定 |
+| 本地信用校验知道额度、不知道已用额度（`credit_exposure` 一直是 `0`）：`finance.voucher.posted.v1` 没有客户 ID，与 `erp/finance` 之间也没有对账 | 权威判定是财务的 `finance.credit.rejected.v1`，事后把订单挂起。改历史订单前的期间检查、对账调用都会带回一条到 `erp/finance` 的同步边；那是一个新的设计决定，不是遗漏 |
 | `sales_order_reconciliation_queue` 有行写入，但没人读 | 调用方收到 `503` 后带同一个键重试，订单就能落定；对账任务没做 |
 | `ShipOrder`：`ConfirmIssue` 成功了，本地 `SHIPPED` 却失败 | 订单停在 `CONFIRMED`，库存已出；带同一个键重试即可补完（两边都幂等）。没有自动补完 |
 | gRPC 的 `GetOrder` / `ListOrders` 需要调用者的 Claims，而 be-sdk-go 的 gRPC 服务端不建立它 | 这类调用以内部错误失败；用户经 REST 读。`BatchGetOrder` 与 `GetOrderStatus` 按设计不带范围（组件间协议） |

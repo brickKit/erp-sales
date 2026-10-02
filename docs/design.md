@@ -69,7 +69,7 @@ The credit check sits before the reservation on purpose: an order clearly over i
 
 **Statistics** (`GET /stats/summary`): the last 7 / 30 / 90 calendar days including today (UTC), by the order's `created_at`. `order_count` counts every order created in the window; `confirmed_count` and `total_amount` count only `CONFIRMED`, `SHIPPED` and `COMPLETED`; `by_day` lists every day (zero days included), `by_status` all seven states. Filtered by exactly the same scope as `GET /orders`, including `view`.
 
-**Errors and logs**: invalid input, a wrong state, insufficient stock and an exceeded credit limit are `400`; an order outside the scope `403`; unknown `404`; reservation state unknown `503`. Such caller errors are logged at INFO, transient ones at WARN; ERROR is kept for what an operator must act on (an unreachable dependency, a database error, a suspended order).
+**Errors and logs**: invalid input, a wrong state, insufficient stock and an exceeded credit limit are `400`; unknown `404`, and reading a single order outside the scope is `404` too, worded exactly the same, so the scope never reveals that the order exists; a command (confirm, cancel, ship) on an order outside the scope `403`; reservation state unknown `503`. Such caller errors are logged at INFO, transient ones at WARN; ERROR is kept for what an operator must act on (an unreachable dependency, a database error, a suspended order).
 
 ## Events
 
@@ -103,7 +103,6 @@ Consumed:
 | `mdm/customer` | `BatchGet`: active customer, name snapshot | create, confirm |
 | `mdm/product` | `BatchGet`: active products, SKU / name / unit / category snapshot | create, confirm |
 | `erp/inventory` | `Reserve`, `GetReservationStatus`, `CancelReservation`, `ConfirmIssue` | confirm, cancel, ship |
-| `erp/finance` | declared; no synchronous call in this version | — |
 | `infra/workflow` (optional) | `CreateTask` for exception tasks | compensation, won-opportunity conversion |
 
 When `infra/workflow` is absent the platform injects no address at all; the component checks `rt.Config.Endpoint` and skips the task (the order is still suspended, the failure logged). On a user request every call forwards the caller's token; only the event handler uses the system identity (`make gates` scans for `SystemClient` on request paths).
@@ -111,11 +110,12 @@ When `infra/workflow` is absent the platform injects no address at all; the comp
 | Not a dependency | Why |
 |---|---|
 | `crm/opportunity` | CRM and ERP have no synchronous edge; won opportunities arrive as events, order IDs go back as events |
+| `erp/finance` | nothing here calls it: finance listens to `sales.order.created.v1` and answers with `finance.credit.rejected.v1`. An edge with no call would only make every run of this component start finance too |
 | `infra/iam-casdoor`, `infra/authz` | tokens and the permission bundle come from URLs in the configuration |
 
 ## Place in the synchronous call graph
 
-A root: outgoing edges to `mdm/customer`, `mdm/product`, `erp/inventory` (and the declared `erp/finance`, plus the optional `infra/workflow`), none of which call back, so no path returns here. Incoming calls are from users (REST) and from other components' reads (`BatchGetOrder`, `GetOrderStatus`). It never points at a CRM component.
+A root: outgoing edges to `mdm/customer`, `mdm/product`, `erp/inventory` and the optional `infra/workflow`, none of which call back, so no path returns here. Incoming calls are from users (REST) and from other components' reads (`BatchGetOrder`, `GetOrderStatus`). It never points at a CRM component.
 
 ## Partitioning and archiving
 
@@ -127,7 +127,9 @@ Archiving is designed but not implemented: an order moves to `erp_sales_archive`
 
 Two dimensions on `sales_orders`: `org` (`dept_path` prefix) and `owner` (`owner_id` equals the caller), the two basic views of a sales organisation, "my department and below" and "my orders". The scope columns are a snapshot taken at creation, not a lookup of where the person is now; otherwise a salesperson's past orders would move with them when they change department, silently changing every report.
 
-Lists and statistics choose one view with `view` (`dept` by default, or `mine`) and never AND them (that would narrow "my department" to "mine in my department"). A single order (get, confirm, cancel, ship) is visible when either matches. Both operands always come from the caller's real scope (`besdk.ScopeOf`): an empty department path means the caller sits at the root of the tree and sees everything, as the SDK defines it. The scope is pushed into the SQL `WHERE`, never filtered afterwards in Go (paging would break). Orders from won opportunities take owner and department from the event.
+Lists and statistics choose one view with `view` (`dept` by default, or `mine`; any other value is `400`, so a misspelt `mine` never silently shows the whole department) and never AND or OR them (AND would narrow "my department" to "mine in my department"). A single order (get, confirm, cancel, ship) is visible when either matches; outside the scope a read answers `404` as if the order did not exist, a command `403`. Both operands always come from the caller's real scope (`besdk.ScopeOf`), and neither may default to "everything". The scope is pushed into the SQL `WHERE`, never filtered afterwards in Go (paging would break). Orders from won opportunities take owner and department from the event.
+
+**A caller with no department** (the token's `dept_path` is empty: a new account not yet placed in the organisation) matches no `org` row: the SDK gives a department prefix that no real path starts with. Their `dept` view is an empty list and zero statistics; a single order is visible only if they own it. They may still create orders: the snapshot then has an empty `dept_path` and `dept_id`, and the order is visible only to its owner (nobody's department prefix, not even the root's, matches an empty path). The SDK's no-department value is never written into a row; the repository rejects a `dept_path` that is neither empty nor starts with `/`. Seeing the whole organisation means sitting in its root department, or holding the explicit root marker `/`, which as a prefix matches every order that has a department. The repository treats an empty prefix or owner as a caller's mistake (`InvalidArgument`), never as "no restriction".
 
 ## Reference implementations
 
@@ -146,7 +148,7 @@ Lists and statistics choose one view with `view` (`dept` by default, or `mine`) 
 
 | Question | Current answer |
 |---|---|
-| `erp/finance` is a declared dependency with no call: period checks before changing a historical order and `BatchGetCreditExposure` for reconciliation were planned but never built | The local credit check uses the limit only (`credit_exposure` stays `0`); the authoritative decision is finance's `finance.credit.rejected.v1`. Building reconciliation, or dropping the edge, is a design decision still open |
+| The local credit check knows the limit but not the exposure (`credit_exposure` stays `0`): `finance.voucher.posted.v1` has no customer ID, and there is no reconciliation with `erp/finance` | The authoritative decision is finance's `finance.credit.rejected.v1`, which suspends the order afterwards. Period checks before changing a historical order, or a reconciliation call, would bring back a synchronous edge to `erp/finance`; that is a new design decision, not a gap to fill |
 | Rows in `sales_order_reconciliation_queue` are written, but nothing reads them | The caller gets `503` and retries with the same key, which settles the order; a reconciliation job is not built |
 | `ShipOrder`: `ConfirmIssue` succeeded, the local `SHIPPED` failed | The order stays `CONFIRMED` while the stock is issued; a retry with the same key completes it (both sides are idempotent). Nothing does it automatically |
 | `GetOrder` / `ListOrders` over gRPC need the caller's claims, which the gRPC server side of be-sdk-go does not establish | Such calls fail with an internal error; users read through REST. `BatchGetOrder` and `GetOrderStatus` have no scope by design (component protocols) |

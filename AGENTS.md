@@ -12,7 +12,7 @@ The AI guide to developing this component. How to use it, its boundaries and con
 | `backend/cmd/server/main.go` | One line, `besdk.RunStandalone(module.New)` |
 | `backend/cmd/migrate/main.go` | One line, `migrate.Main(migrations.FS)`: the migration container's entry (`./migrate up`) |
 | `backend/internal/tcc/` | The cross-component orchestration: `confirm.go` (reserve, status after a timeout, compensation, suspension and exception task), `create.go`, `cancel.go`, `ship.go`, `opportunity_won.go` (won opportunity → confirmed order, system identity), `loglevel.go` (`FailureLevel`) |
-| `backend/internal/client/client.go` | Dialing the five dependencies: `Customer`, `Product`, `Inventory`, `Finance`, `Workflow` forward the caller's token; the `*System` variants are for event handlers only |
+| `backend/internal/client/client.go` | Dialing the four dependencies: `Customer`, `Product`, `Inventory`, `Workflow` forward the caller's token; the `*System` variants are for event handlers only |
 | `backend/internal/repo/write.go` | Local writes: `CreateOrder` and the `Finalize*` steps; each runs idempotency claim → state check under row lock → write → outbox in one transaction |
 | `backend/internal/repo/order.go` | Order types and statuses, `GetOrder`, `ListOrders` (scope, filters, keyset paging), `BatchGetOrder`, `GetOrderStatus` |
 | `backend/internal/repo/pricing.go` | `validateQty`, the price rule lookup `findPriceTx`, `CalculatePriceDryRun` |
@@ -67,7 +67,7 @@ The skipped tests (in `backend/internal/tcc/confirm_test.go`, `backend/internal/
 - **Not enough stock fails the whole order**; there is no partial reservation.
 - **`sales.order.created.v1` is published on confirmation**, not on creation: a draft must not produce a receivable.
 - **Order lines are snapshots** (SKU, name, unit, price); nothing joins the master data later.
-- **Two data-scope views, chosen by `view`**: `dept` (department prefix) or `mine` (owner), never ANDed; single-order reads and commands accept either.
+- **Two data-scope views, chosen by `view`**: `dept` (department prefix) or `mine` (owner), never combined; single-order reads and commands accept either. A caller with no department matches no `dept` row and sees only their own orders.
 - **Money and quantities are decimal strings** end to end, computed with `math/big.Rat` and rounded once, half away from zero, to cents.
 - **A won opportunity becomes an order through the event only** (system identity, ownership taken from the event); failures become an exception task for the opportunity's owner, never an event back to CRM.
 
@@ -84,6 +84,9 @@ The skipped tests (in `backend/internal/tcc/confirm_test.go`, `backend/internal/
 | Handle every `infra.workflow.task.completed.v1` | Another component's task ID is taken for an order ID | The subject is shared by all components; filter on `source_component` / `source_aggregate` |
 | Parse an amount or quantity with `strconv.ParseFloat`, or store a value without checking it | `"NaN"` lands in a `NUMERIC` column and outranks every number, so `CHECK (qty > 0)` and every comparison let it through; `0.1 + 0.2` rounds to the wrong cent | `validateQty` and `creditLimitPattern` accept plain decimals only; arithmetic goes through `backend/internal/decimal` |
 | Log a caller's error at ERROR | Every rejected draft or out-of-stock order pages someone | `tcc.FailureLevel`: 4xx → INFO, transient → WARN, the rest → ERROR |
+| Write `besdk.ScopeOf(ctx).Prefix` into a row without checking `HasDept` | The SDK's no-department value lands in `dept_path`; every other caller without a department now sees that order in their `dept` view | Snapshot `dept_path` / `dept_id` only when `HasDept`, empty otherwise; `CreateOrder` in the repository rejects a `dept_path` that does not start with `/` |
+| Treat an empty `ScopePrefix` / `ScopeOwner` as "no restriction" | A `LIKE` on an empty prefix matches the whole table, and every caller sees every order | The repository returns `InvalidArgument`; `Order.InScope` treats that side as not matching |
+| Answer `403` when someone reads a single order outside their scope | The answer tells a stranger that the order exists | A read outside the scope is `404`, worded exactly like an unknown ID; only commands answer `403` (`GetOrder` vs `checkOrderInScope`) |
 | Partition `sales_order_items` by its own time | Items of one order land in different partitions from their header | They are partitioned by the header's `created_at` (`order_created_at`) |
 | Change a comment or option in `contracts/erp/sales/v1/sales.proto` without tagging the contract package | Builds pass locally (the `replace` hides it); a shell fetching `erp-sales/v2` compiles against the old `gen/` | Any change under `gen/erp/sales/` needs a new tag gen/erp/sales/v1.x.y and the root `go.mod` requiring it |
 

@@ -29,6 +29,7 @@
 - **仓库**：`erp/inventory` 里的一个仓库，把它的 ID 填进 `DEFAULT_WAREHOUSE_ID`：每次确认都从这一个仓库预留。BrickEnterprise 项目里 `erp/inventory` 的迁移预置了仓库 `1`（`WH-EAST`）。
 - **价格**：迁移预置了一条全局规则（单价 `100.00`、无折扣、税率 `0.13`），让订单至少能定价。没有管理价格表的接口；真实价格是往 `pricelist_items` 里插的行。
 - **信用额度**：只有客户的信用额度（从 `mdm.customer.created.v1` / `.updated.v1` 事件复制过来）够用，订单才能确认。事件还没到的客户额度是 `0`，它的订单确认不了：先起本组件再建客户，或者重放客户事件。
+- **部门**：用户的 `dept_path`（由 `infra/authz` 签发）决定 `dept` 视图里看到什么。还没分到任何部门的用户只看得到自己名下的订单；要看全公司的人应当分在根部门。
 - **授权**（`infra/authz`）与**身份**（`infra/iam-casdoor`，或任何提供 JWKS 的 IAM）要能经 `AUTHZ_BUNDLE_URL`、`IAM_JWKS_URL` 访问到，REST 路由才不只回错误。它们是配置，不是依赖。
 - 演示数据（可选）：本组件、`infra/iam-casdoor`、`infra/authz`、`mdm/customer`、`mdm/product` 都在跑之后，在组件目录 `make seed` 经真实 REST 接口建五张不同状态的订单（会先灌好前面几个组件的种子）。
 
@@ -37,8 +38,9 @@
 - `mdm/customer` —— `BatchGet`：客户必须存在且启用；客户名称复制到订单上。建单时调一次，确认时再调一次。
 - `mdm/product` —— `BatchGet`：每个产品都必须存在且启用；SKU、名称、基本单位与分类复制到订单行上（分类用来匹配分类级价格规则）。
 - `erp/inventory` —— 确认时 `Reserve`（所有行都从 `DEFAULT_WAREHOUSE_ID` 预留；库存不足整单失败），`Reserve` 超时之后 `GetReservationStatus`，补偿时与取消已确认订单时 `CancelReservation`，发货时 `ConfirmIssue`。
-- `erp/finance` —— 声明了依赖，但这个版本不同步调用它。它的信用判定以事件 `finance.credit.rejected.v1` 到达。
 - `infra/workflow`（可选）—— `CreateTask` 开异常待办：补偿连续失败三次（派给 `EXCEPTION_ASSIGNEE_SUB`），或赢单商机没能转成已确认的订单（派给商机负责人）。缺席时不开待办；订单照样挂起，失败写进日志。
+
+`erp/finance` 不是依赖：本组件从不调用它。它消费 `sales.order.created.v1`，以 `finance.credit.rejected.v1` 回告，两边只靠事件衔接。
 
 用户请求路径上的每次调用都透传调用者的 token（`UserClient`）；只有赢单转单这条跑在事件 handler 里、没有用户的路径用本组件自己的身份调用。每次调用各自限时 5 秒。
 
@@ -64,9 +66,9 @@
 ## 契约索引
 
 - `contracts/erp/sales/v1/sales.proto` —— gRPC `erp.sales.v1.SalesService`：`CreateOrder`、`ConfirmOrder`、`CancelOrder`、`ShipOrder`（都带 `idempotency_key`）、`CalculatePriceDryRun`、`GetOrder`、`ListOrders`（游标分页，没有 offset；可按客户、状态、时间窗口、`source_opportunity_id` 过滤）、`BatchGetOrder`（找不到的 ID 放进 `missing_ids`，不报错）、`GetOrderStatus`（给命令超时的调用方用；`UNSPECIFIED` 表示没有这张单）。`Order.source_opportunity_id` 是赢单订单的来源商机，手工建的单为空。`GetOrder` 与 `ListOrders` 按调用者的数据范围过滤，需要调用者的身份；`BatchGetOrder` 与 `GetOrderStatus` 是组件之间的读，不带范围。Go 包是独立模块 `github.com/brickKit/erp-sales/gen/erp/sales`。
-- `contracts/sales.openapi.yaml` —— REST 前缀 `/erp/sales`，每条路由都带权限键：`GET /orders`（`erp.sales.view`；`view=dept`（默认）或 `mine`、`customer_id`、`status_filter`、`source_opportunity_id`、`created_after` / `created_before`（RFC 3339，默认最近 90 天）、`cursor`、`page_size`），`GET /orders/{id}`（`erp.sales.view`），`POST /orders`（`erp.sales.create`；数量是正的十进制字符串，整数至多 12 位、小数至多 6 位），`POST /orders/{id}/confirm`（`erp.sales.confirm`），`POST /orders/{id}/cancel`（`erp.sales.cancel`），`POST /orders/{id}/ship`（`erp.sales.ship`），`POST /price/dry-run`（`erp.sales.create`），`GET /stats/summary`（`erp.sales.view`；`period=week|month|quarter`（7 / 30 / 90 天，默认 `month`）与列表相同的 `view`；订单数、已确认数与金额，按日、按状态分布）。金额是十进制字符串。错误：输入不合法、订单状态不对或库存不足 → `400`；订单不在调用者范围内 → `403`；订单不存在 → `404`；超时后预留状态未知 → `503`（带同一个幂等键重试）。
+- `contracts/sales.openapi.yaml` —— REST 前缀 `/erp/sales`，每条路由都带权限键：`GET /orders`（`erp.sales.view`；`view=dept`（默认）或 `mine`，其它取值 `400`；`customer_id`、`status_filter`、`source_opportunity_id`、`created_after` / `created_before`（RFC 3339，默认最近 90 天）、`cursor`、`page_size`），`GET /orders/{id}`（`erp.sales.view`），`POST /orders`（`erp.sales.create`；数量是正的十进制字符串，整数至多 12 位、小数至多 6 位），`POST /orders/{id}/confirm`（`erp.sales.confirm`），`POST /orders/{id}/cancel`（`erp.sales.cancel`），`POST /orders/{id}/ship`（`erp.sales.ship`），`POST /price/dry-run`（`erp.sales.create`），`GET /stats/summary`（`erp.sales.view`；`period=week|month|quarter`（7 / 30 / 90 天，默认 `month`）与列表相同的 `view`，二选一，不会两个一起；订单数、已确认数与金额，按日、按状态分布）。金额是十进制字符串。错误：输入不合法、订单状态不对或库存不足 → `400`；订单不存在、或读一张不在调用者范围内的订单 → `404`（两者答得一样，数据范围不泄露订单是否存在）；确认、取消、发货一张不在范围内的订单 → `403`；超时后预留状态未知 → `503`（带同一个幂等键重试）。
 - `contracts/events/sales.events.json` —— 经 Outbox 发布：`sales.order.created.v1`（确认时发；带 `source_opportunity_id`，可选，手工单为空）、`sales.order.cancelled.v1`、`sales.order.shipped.v1`。消费：`finance.credit.rejected.v1`（挂起订单）、`mdm.customer.created.v1` / `.updated.v1`（额度副本；没带 `credit_limit` 的更新保留原额度）、`infra.workflow.task.completed.v1`（补偿异常待办被同意后订单回到 `DRAFT`）、`crm.opportunity.won.v1`（建单并确认）。
-- `assembly.yaml` —— 本项目的元数据：上面五个权限键、菜单项、网关路由 `/erp/sales/**`、schema 与角色，以及 `sales_orders` 上的数据范围 `org`（`dept_path` 前缀）与 `owner`（`owner_id`）。
+- `assembly.yaml` —— 本项目的元数据：上面五个权限键、菜单项、网关路由 `/erp/sales/**`、schema 与角色，以及 `sales_orders` 上的数据范围 `org`（`dept_path` 前缀）与 `owner`（`owner_id`）。没有部门的调用者（token 里 `dept_path` 为空）什么 `org` 行都不命中：`dept` 视图为空、统计为零，只看得到、动得了自己名下的订单。他仍然可以建单，这些单的 `dept_path` 为空，只对他本人可见。`dept_path = "/"` 是显式的根标记，命中所有带部门的订单。
 
 ## 外壳声明
 

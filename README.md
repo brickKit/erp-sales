@@ -11,7 +11,7 @@ brickkit add erp/sales@2.0.0
 brickkit up
 ```
 
-Prepare first: see "Before you deploy" in BRICKKIT.md (a PostgreSQL schema and login role, NATS, a warehouse ID in `erp/inventory`, and the authorization and JWKS URLs). It brings `mdm/customer`, `mdm/product`, `erp/inventory` and `erp/finance` along; `infra/workflow` is optional.
+Prepare first: see "Before you deploy" in BRICKKIT.md (a PostgreSQL schema and login role, NATS, a warehouse ID in `erp/inventory`, and the authorization and JWKS URLs). It brings `mdm/customer`, `mdm/product` and `erp/inventory` along; `infra/workflow` is optional.
 
 ## Documentation
 

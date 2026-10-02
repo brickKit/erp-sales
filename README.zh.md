@@ -11,7 +11,7 @@ brickkit add erp/sales@2.0.0
 brickkit up
 ```
 
-先看 BRICKKIT.zh.md 的"部署前准备"（PostgreSQL schema 与登录角色、NATS、`erp/inventory` 里的一个仓库 ID、授权与 JWKS 的 URL）。它会连带 `mdm/customer`、`mdm/product`、`erp/inventory`、`erp/finance` 一起起来；`infra/workflow` 可选。
+先看 BRICKKIT.zh.md 的"部署前准备"（PostgreSQL schema 与登录角色、NATS、`erp/inventory` 里的一个仓库 ID、授权与 JWKS 的 URL）。它会连带 `mdm/customer`、`mdm/product`、`erp/inventory` 一起起来；`infra/workflow` 可选。
 
 ## 文档
 

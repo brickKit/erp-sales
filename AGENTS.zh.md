@@ -12,7 +12,7 @@
 | `backend/cmd/server/main.go` | 一行 `besdk.RunStandalone(module.New)` |
 | `backend/cmd/migrate/main.go` | 一行 `migrate.Main(migrations.FS)`：迁移容器的入口（`./migrate up`） |
 | `backend/internal/tcc/` | 跨组件编排：`confirm.go`（预留、超时后查状态、补偿、挂起与异常待办）、`create.go`、`cancel.go`、`ship.go`、`opportunity_won.go`（赢单商机 → 已确认订单，系统身份）、`loglevel.go`（`FailureLevel`） |
-| `backend/internal/client/client.go` | 拨号到五个依赖：`Customer`、`Product`、`Inventory`、`Finance`、`Workflow` 透传调用者 token；`*System` 一组只给事件 handler 用 |
+| `backend/internal/client/client.go` | 拨号到四个依赖：`Customer`、`Product`、`Inventory`、`Workflow` 透传调用者 token；`*System` 一组只给事件 handler 用 |
 | `backend/internal/repo/write.go` | 本地写：`CreateOrder` 与各个 `Finalize*` 步骤；每个都在一个事务里做 幂等声明 → 锁行核对状态 → 写 → Outbox |
 | `backend/internal/repo/order.go` | 订单类型与状态、`GetOrder`、`ListOrders`（范围、过滤、keyset 分页）、`BatchGetOrder`、`GetOrderStatus` |
 | `backend/internal/repo/pricing.go` | `validateQty`、价格规则查找 `findPriceTx`、`CalculatePriceDryRun` |
@@ -67,7 +67,7 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw
 - **库存不足整单失败**；没有部分预留。
 - **`sales.order.created.v1` 在确认时发**，不是建单时：草稿不该产生应收。
 - **订单行是快照**（SKU、名称、单位、价格）；之后不再 join 主数据。
-- **两个数据范围视图，由 `view` 选**：`dept`（部门前缀）或 `mine`（负责人），绝不取交集；单张订单的读与命令两者任一命中即可。
+- **两个数据范围视图，由 `view` 选**：`dept`（部门前缀）或 `mine`（负责人），绝不组合；单张订单的读与命令两者任一命中即可。没有部门的调用者在 `dept` 视图里什么都不命中，只看得到自己的订单。
 - **金额与数量全程是十进制字符串**，用 `math/big.Rat` 计算，最后四舍五入（远离零）到分一次。
 - **赢单商机只经事件变成订单**（系统身份，归属取自事件）；失败变成派给商机负责人的异常待办，绝不发事件回 CRM。
 
@@ -84,6 +84,9 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=erp_sales_rw
 | 处理每一条 `infra.workflow.task.completed.v1` | 别的组件的待办 ID 被当成订单 ID | 这个 subject 全平台共用；按 `source_component` / `source_aggregate` 过滤 |
 | 用 `strconv.ParseFloat` 解析金额或数量，或不校验就落库 | `"NaN"` 进了 `NUMERIC` 列，排在一切数字之上，`CHECK (qty > 0)` 与每一个比较都放它过去；`0.1 + 0.2` 舍入到错的一分 | `validateQty` 与 `creditLimitPattern` 只认普通十进制写法；运算走 `backend/internal/decimal` |
 | 把调用方的错误记成 ERROR | 每一张被拒的草稿、每一次库存不足都在告警 | `tcc.FailureLevel`：4xx → INFO，暂时性 → WARN，其余 → ERROR |
+| 不看 `HasDept` 就把 `besdk.ScopeOf(ctx).Prefix` 写进行里 | SDK 的"无部门"值进了 `dept_path`；此后每一个没有部门的调用者都在 `dept` 视图里看到这张单 | 只在 `HasDept` 时快照 `dept_path` / `dept_id`，否则写空串；仓储层的 `CreateOrder` 拒绝不以 `/` 开头的 `dept_path` |
+| 把空的 `ScopePrefix` / `ScopeOwner` 当成"不限" | 空前缀上的 `LIKE` 匹配整张表，人人看到全部订单 | 仓储层返回 `InvalidArgument`；`Order.InScope` 把那一侧当作不命中 |
+| 有人读范围外的单张订单时答 `403` | 这个回答告诉陌生人这张单存在 | 范围外的读答 `404`，文案和 ID 不存在时一字不差；只有命令答 `403`（`GetOrder` 与 `checkOrderInScope`） |
 | `sales_order_items` 按行自己的时间分区 | 同一张订单的行和订单头落在不同分区 | 按订单头的 `created_at`（`order_created_at`）分区 |
 | 改了 `contracts/erp/sales/v1/sales.proto` 的注释或选项，却不给契约包打 tag | 本地全绿（`replace` 掩盖了它）；外壳拉 `erp-sales/v2` 时对着旧的 `gen/` 编译 | `gen/erp/sales/` 下有任何变化都要打新 tag gen/erp/sales/v1.x.y，根 `go.mod` require 它 |
 
