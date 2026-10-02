@@ -24,7 +24,7 @@ The AI guide to developing this component. How to use it, its boundaries and con
 | `backend/internal/consumer/consumer.go` | The five consumed subjects and their handlers |
 | `backend/internal/service/` | Input checks, the data scope on single-order commands, logging by `tcc.FailureLevel`, the error → gRPC status mapping (`status.go`) |
 | `backend/internal/http/http.go` | REST routes, each registered with its permission key; `parseListInput`, `statsSummaryHandler` |
-| `backend/internal/grpc/grpc.go` | `erp.sales.v1.SalesService` |
+| `backend/internal/grpc/grpc.go` | `erp.sales.v1.SalesService`; `requireUser` answers `UNAUTHENTICATED` on the six user-facing rpcs when the call carries no caller identity |
 | `backend/internal/partition/` | Background loops: weekly partitions of `event_outbox` / `event_inbox` four weeks ahead, monthly partitions of `sales_orders` / `sales_order_items` three months ahead |
 | `migrations/` | SQL migrations, embedded by `migrations/embed.go`; no schema or role names (the search path and the migrating role supply them); `005` creates the partition window for the day it runs |
 | `contracts/` | proto, OpenAPI, event schema |

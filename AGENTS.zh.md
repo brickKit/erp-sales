@@ -24,7 +24,7 @@
 | `backend/internal/consumer/consumer.go` | 消费的五个 subject 及其 handler |
 | `backend/internal/service/` | 入参校验、单张订单命令的数据范围、按 `tcc.FailureLevel` 记日志、错误 → gRPC 状态码映射（`status.go`） |
 | `backend/internal/http/http.go` | REST 路由，每条都带权限键注册；`parseListInput`、`statsSummaryHandler` |
-| `backend/internal/grpc/grpc.go` | `erp.sales.v1.SalesService` |
+| `backend/internal/grpc/grpc.go` | `erp.sales.v1.SalesService`；调用不带调用者身份时，`requireUser` 让面向用户的六个 rpc 答 `UNAUTHENTICATED` |
 | `backend/internal/partition/` | 后台循环：`event_outbox` / `event_inbox` 的周分区提前四周、`sales_orders` / `sales_order_items` 的月分区提前三个月建好 |
 | `migrations/` | SQL 迁移，由 `migrations/embed.go` 嵌入；不写 schema 名和角色名（由 search_path 与跑迁移的角色给出）；`005` 按运行当天建好分区窗口 |
 | `contracts/` | proto、OpenAPI、事件 schema |

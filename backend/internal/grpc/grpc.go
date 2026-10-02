@@ -5,6 +5,9 @@ package grpc
 import (
 	"context"
 
+	besdk "github.com/brickKit/be-sdk-go"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	salesv1 "github.com/brickKit/erp-sales/gen/erp/sales/v1"
@@ -20,6 +23,26 @@ type server struct {
 
 func New(svc *service.Service) salesv1.SalesServiceServer {
 	return &server{svc: svc}
+}
+
+// errNoUserIdentity：面向用户的六个 rpc（建单、确认、取消、发货、GetOrder、
+// ListOrders）都要调用者的数据范围，而 be-sdk-go 的 gRPC 端口不验 JWT，ctx 里没有
+// Claims。这是调用方的错，回 UNAUTHENTICATED，不进 service：那里的 besdk.ScopeOf
+// 取不到 Claims 会 panic，被 recovery 变成 INTERNAL 并打一行 ERROR（同 erp/finance）。
+// 组件之间的 CalculatePriceDryRun、BatchGetOrder、GetOrderStatus 不经过这里。
+var errNoUserIdentity = status.Error(codes.Unauthenticated,
+	"gRPC 不透传用户身份，这个操作请用 REST /erp/sales/…")
+
+// requireUser 在 ctx 里没有验过签的 Claims 时返回 errNoUserIdentity。SDK 没有不 panic
+// 的 Claims 读取函数，只能在这里就地 recover besdk.ScopeOf 的 panic（不会冒到 recovery）。
+func requireUser(ctx context.Context) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errNoUserIdentity
+		}
+	}()
+	_ = besdk.ScopeOf(ctx)
+	return nil
 }
 
 func toProtoStatus(s string) salesv1.OrderStatus {
@@ -86,6 +109,9 @@ func toProtoOrder(o *repo.Order) *salesv1.Order {
 }
 
 func (s *server) CreateOrder(ctx context.Context, req *salesv1.CreateOrderRequest) (*salesv1.CreateOrderResponse, error) {
+	if err := requireUser(ctx); err != nil {
+		return nil, err
+	}
 	items := make([]service.CreateOrderItem, 0, len(req.Items))
 	for _, it := range req.Items {
 		items = append(items, service.CreateOrderItem{ProductID: it.ProductId, Qty: it.Qty})
@@ -98,6 +124,9 @@ func (s *server) CreateOrder(ctx context.Context, req *salesv1.CreateOrderReques
 }
 
 func (s *server) ConfirmOrder(ctx context.Context, req *salesv1.ConfirmOrderRequest) (*salesv1.ConfirmOrderResponse, error) {
+	if err := requireUser(ctx); err != nil {
+		return nil, err
+	}
 	order, err := s.svc.ConfirmOrder(ctx, req.OrderId, req.IdempotencyKey)
 	if err != nil {
 		return nil, service.ToStatus(err)
@@ -106,6 +135,9 @@ func (s *server) ConfirmOrder(ctx context.Context, req *salesv1.ConfirmOrderRequ
 }
 
 func (s *server) CancelOrder(ctx context.Context, req *salesv1.CancelOrderRequest) (*salesv1.CancelOrderResponse, error) {
+	if err := requireUser(ctx); err != nil {
+		return nil, err
+	}
 	order, err := s.svc.CancelOrder(ctx, req.OrderId, req.IdempotencyKey, req.Reason)
 	if err != nil {
 		return nil, service.ToStatus(err)
@@ -114,6 +146,9 @@ func (s *server) CancelOrder(ctx context.Context, req *salesv1.CancelOrderReques
 }
 
 func (s *server) ShipOrder(ctx context.Context, req *salesv1.ShipOrderRequest) (*salesv1.ShipOrderResponse, error) {
+	if err := requireUser(ctx); err != nil {
+		return nil, err
+	}
 	order, err := s.svc.ShipOrder(ctx, req.OrderId, req.IdempotencyKey)
 	if err != nil {
 		return nil, service.ToStatus(err)
@@ -140,6 +175,9 @@ func (s *server) CalculatePriceDryRun(ctx context.Context, req *salesv1.Calculat
 }
 
 func (s *server) GetOrder(ctx context.Context, req *salesv1.GetOrderRequest) (*salesv1.Order, error) {
+	if err := requireUser(ctx); err != nil {
+		return nil, err
+	}
 	order, err := s.svc.GetOrder(ctx, req.Id)
 	if err != nil {
 		return nil, service.ToStatus(err)
@@ -148,6 +186,9 @@ func (s *server) GetOrder(ctx context.Context, req *salesv1.GetOrderRequest) (*s
 }
 
 func (s *server) ListOrders(ctx context.Context, req *salesv1.ListOrdersRequest) (*salesv1.ListOrdersResponse, error) {
+	if err := requireUser(ctx); err != nil {
+		return nil, err
+	}
 	in := repo.ListInput{
 		Cursor: req.Cursor, PageSize: int(req.PageSize), CustomerID: req.CustomerId,
 		SourceOpportunityID: req.SourceOpportunityId,

@@ -160,7 +160,7 @@ REST 前缀 `/erp/sales`，每条路由都带 `assembly.yaml` 里的键：`GET /
 | 预留成功了、订单却没确认：`Reserve` 超时且状态一直不明，或进程停在④与⑤之间 | 只有带同一个键重试同一个命令才能找回：库存的预留按 `<键>:reserve` 幂等，重试会绑定同一份预留并确认订单。找不回的：放弃了、或换了新键重试的调用方（会再预留一份，第一份丢了）；停在④与⑤之间的进程（不写对账队列，没有任何东西知道）；赢单路径，只有赢单事件再发一次才会重试，因为核心 NATS 从不重投。库存的预留不会过期，这样的预留一直占着库存，直到有人在 `erp/inventory` 里撤销它。写进 `sales_order_reconciliation_queue` 的行（查状态也超时）没有任何东西读。扫描对账队列与陈旧草稿的清理任务、或库存侧的预留过期，都没做 |
 | 被财务拒绝信用挂起的订单不能恢复，额度调高了也不能 | 负责人取消它（同时释放库存）再重新录入。恢复要知道已用额度回到了额度之内，这只有财务知道；那是本组件没有的一条事件或一次调用 |
 | `ShipOrder`：`ConfirmIssue` 成功了，本地 `SHIPPED` 却失败 | 订单停在 `CONFIRMED`，库存已出；带同一个键重试即可补完（两边都幂等）。没有自动补完 |
-| gRPC 的 `GetOrder` / `ListOrders` 需要调用者的 Claims，而 be-sdk-go 的 gRPC 服务端不建立它 | 这类调用以内部错误失败；用户经 REST 读。`BatchGetOrder` 与 `GetOrderStatus` 按设计不带范围（组件间协议） |
+| 面向用户的每个 rpc（`CreateOrder`、`ConfirmOrder`、`CancelOrder`、`ShipOrder`、`GetOrder`、`ListOrders`）都要调用者的 Claims，用来拍部门快照、判范围或按范围过滤，而 be-sdk-go 的 gRPC 服务端不建立它 | 经 gRPC 调用时，碰任何东西之前就答 `UNAUTHENTICATED`；用户走 REST。今天经 gRPC 能用的只有 `CalculatePriceDryRun`、`BatchGetOrder` 与 `GetOrderStatus`；后两个按设计不带范围（组件间协议）。在 gRPC 一侧带上调用者身份是 be-sdk-go 的改动 |
 | `COMPLETED` / `CLOSED` 没有命令；没有开票 | 还没有页面需要；开票属于槽位族里的选择（见上） |
 | 价格表没有接口 | 直接插行；有页面需要时加管理接口，是只增的契约变更 |
 | 每次确认都用同一个仓库（`DEFAULT_WAREHOUSE_ID`） | 按行或按客户选仓，需要 `erp/inventory` 提供仓库查询，再加一条分配规则 |
