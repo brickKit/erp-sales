@@ -6,40 +6,40 @@ option go_package = "github.com/brickKit/erp-sales/gen/erp/sales/v1;salesv1";
 
 import "google/protobuf/timestamp.proto";
 
-// 销售服务。本组件是阶段二**唯一的链上一环**（设计计划 §6）：四条强
-// 依赖边全在它身上（mdm/customer、mdm/product、erp/inventory、
-// erp/finance），零入边。dependencies.components 因此**不是空数组**
-// ——这是本阶段唯一一个如此的组件。
+// 销售服务。同步调用只指向三个上游（mdm/customer、mdm/product、
+// erp/inventory，外加可选的 infra/workflow），它们都不回调本组件；
+// erp/finance 只经事件衔接（它消费 sales.order.created.v1，以
+// finance.credit.rejected.v1 回告信用否决），没有依赖边。
 service SalesService {
   // ── 命令 ──
   // CreateOrder 建 DRAFT（报价），⚠️ 不预留库存——预留发生在 ConfirmOrder
-  // 的 TCC 链里（设计计划 §3.1）。
+  // 的 TCC 链里。
   rpc CreateOrder (CreateOrderRequest)  returns (CreateOrderResponse);
-  // ConfirmOrder 是本阶段最难的一段代码：校验客户/产品 → 本地信用额度
-  // 预判 → Reserve 库存 → 建单+发事件，失败按情形分别处理或补偿。
+  // ConfirmOrder 是一条 TCC 链：校验客户/产品 → 本地信用额度预判 →
+  // Reserve 库存 → 确认+发事件，失败按情形分别处理或补偿。
   rpc ConfirmOrder(ConfirmOrderRequest) returns (ConfirmOrderResponse);
   rpc CancelOrder (CancelOrderRequest)  returns (CancelOrderResponse);
   // ShipOrder 预留转实际出库（调 erp-inventory 的 ConfirmIssue）。
   rpc ShipOrder   (ShipOrderRequest)    returns (ShipOrderResponse);
 
-  // CalculatePriceDryRun 是纯函数、不落库——前端/BFF 严禁自己算钱
-  // （设计计划 §3.2、§8.4），只能调这个接口。
+  // CalculatePriceDryRun 是纯函数、不落库——前端/BFF 不自己算钱，
+  // 只调这个接口。
   rpc CalculatePriceDryRun(CalculatePriceDryRunRequest) returns (CalculatePriceDryRunResponse);
 
   // ── 读 ──
   rpc GetOrder      (GetOrderRequest)      returns (Order);
   rpc ListOrders    (ListOrdersRequest)    returns (ListOrdersResponse);
-  // BatchGetOrder 是防 N+1 的唯一合法调用方式（§3.8）。
+  // BatchGetOrder：一次取多张订单，调用方不要逐张 GetOrder（N+1）。
   rpc BatchGetOrder (BatchGetOrderRequest) returns (BatchGetOrderResponse);
-  // GetOrderStatus 给上游（阶段三的 crm-opportunity）防"薛定谔的超时"用
-  // （§4.5），本组件自己调 erp-inventory 时也是这个判据。
+  // GetOrderStatus 给调用方在超时之后查清"请求到底有没有被处理"，
+  // 本组件自己调 erp-inventory 超时之后也是这个做法。
   rpc GetOrderStatus(GetOrderStatusRequest) returns (GetOrderStatusResponse);
 }
 
-// ⚠️ CANCELLED 是终态，不能复活（设计计划 §2.1 决定 1）：取消订单时
+// ⚠️ CANCELLED 是终态，不能复活：取消订单时
 // 已经跨进程释放了库存预留，"复活"要重新 Reserve，而那时库存可能已经
 // 被别人占走。SUSPENDED 不在主状态机图里画出来，是异常态：权威额度
-// 超限或补偿连续失败 3 次时进入，需要人工介入（设计计划 §3.1、§4）。
+// 超限或补偿连续失败 3 次时进入，需要人工介入。
 enum OrderStatus {
   ORDER_STATUS_UNSPECIFIED = 0;
   ORDER_STATUS_DRAFT       = 1;
@@ -51,7 +51,7 @@ enum OrderStatus {
   ORDER_STATUS_SUSPENDED   = 7; // 异常态，人工介入
 }
 
-// OrderItem：订单行，**全部快照，不 join**（设计计划 §2.2）。product_id
+// OrderItem：订单行，**全部快照，不 join**。product_id
 // 只作为追溯外键——产品数据在另一个进程另一个 schema 里，物理上 join
 // 不到，且产品改名不该重写历史订单。
 message OrderItem {
@@ -64,12 +64,13 @@ message OrderItem {
   string discount       = 7; // 快照，0~1 的小数，如 "0.10" 表示九折
   string tax_rate       = 8; // 快照，decimal-as-string
   // subtotal 服务端算好直接给：qty * unit_price * (1 - discount)，
-  // 不让调用方自己算（同 §3.2 的"前端严禁自己算钱"判据）。
+  // 不让调用方自己算（同 CalculatePriceDryRun）。
   string subtotal        = 9;
 }
 
 // Order：订单头 + 行。dept_id/dept_path/owner_id 是**创建时快照**，
 // 不是运行时查"这个人现在在哪个部门"：销售换部门后，他以前的订单不跟着走。
+// 建单人没有部门时 dept_id / dept_path 是空串，这张单只对 owner 可见。
 message Order {
   string   id              = 1;
   string   order_no        = 2; // 由 id 派生（"SO" + id），允许有缺口（插入回滚时序列号不回退）
@@ -98,7 +99,7 @@ message CreateOrderItemInput {
 }
 
 message CreateOrderRequest {
-  // ⚠️ 所有跨组件写操作接口必须基于业务单号实现严格幂等（§4.6）。
+  // ⚠️ 写命令都按 idempotency_key 严格幂等：同一个键重放返回第一次的结果。
   string idempotency_key            = 1;
   string customer_id                 = 2;
   repeated CreateOrderItemInput items = 3;

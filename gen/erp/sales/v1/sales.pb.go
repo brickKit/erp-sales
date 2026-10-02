@@ -22,10 +22,10 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// ⚠️ CANCELLED 是终态，不能复活（设计计划 §2.1 决定 1）：取消订单时
+// ⚠️ CANCELLED 是终态，不能复活：取消订单时
 // 已经跨进程释放了库存预留，"复活"要重新 Reserve，而那时库存可能已经
 // 被别人占走。SUSPENDED 不在主状态机图里画出来，是异常态：权威额度
-// 超限或补偿连续失败 3 次时进入，需要人工介入（设计计划 §3.1、§4）。
+// 超限或补偿连续失败 3 次时进入，需要人工介入。
 type OrderStatus int32
 
 const (
@@ -90,7 +90,7 @@ func (OrderStatus) EnumDescriptor() ([]byte, []int) {
 	return file_erp_sales_v1_sales_proto_rawDescGZIP(), []int{0}
 }
 
-// OrderItem：订单行，**全部快照，不 join**（设计计划 §2.2）。product_id
+// OrderItem：订单行，**全部快照，不 join**。product_id
 // 只作为追溯外键——产品数据在另一个进程另一个 schema 里，物理上 join
 // 不到，且产品改名不该重写历史订单。
 type OrderItem struct {
@@ -104,7 +104,7 @@ type OrderItem struct {
 	Discount    string                 `protobuf:"bytes,7,opt,name=discount,proto3" json:"discount,omitempty"`                          // 快照，0~1 的小数，如 "0.10" 表示九折
 	TaxRate     string                 `protobuf:"bytes,8,opt,name=tax_rate,json=taxRate,proto3" json:"tax_rate,omitempty"`             // 快照，decimal-as-string
 	// subtotal 服务端算好直接给：qty * unit_price * (1 - discount)，
-	// 不让调用方自己算（同 §3.2 的"前端严禁自己算钱"判据）。
+	// 不让调用方自己算（同 CalculatePriceDryRun）。
 	Subtotal      string `protobuf:"bytes,9,opt,name=subtotal,proto3" json:"subtotal,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -205,6 +205,7 @@ func (x *OrderItem) GetSubtotal() string {
 
 // Order：订单头 + 行。dept_id/dept_path/owner_id 是**创建时快照**，
 // 不是运行时查"这个人现在在哪个部门"：销售换部门后，他以前的订单不跟着走。
+// 建单人没有部门时 dept_id / dept_path 是空串，这张单只对 owner 可见。
 type Order struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	Id           string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -419,7 +420,7 @@ func (x *CreateOrderItemInput) GetQty() string {
 
 type CreateOrderRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// ⚠️ 所有跨组件写操作接口必须基于业务单号实现严格幂等（§4.6）。
+	// ⚠️ 写命令都按 idempotency_key 严格幂等：同一个键重放返回第一次的结果。
 	IdempotencyKey string                  `protobuf:"bytes,1,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
 	CustomerId     string                  `protobuf:"bytes,2,opt,name=customer_id,json=customerId,proto3" json:"customer_id,omitempty"`
 	Items          []*CreateOrderItemInput `protobuf:"bytes,3,rep,name=items,proto3" json:"items,omitempty"`

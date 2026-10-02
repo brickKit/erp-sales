@@ -34,31 +34,31 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// 销售服务。本组件是阶段二**唯一的链上一环**（设计计划 §6）：四条强
-// 依赖边全在它身上（mdm/customer、mdm/product、erp/inventory、
-// erp/finance），零入边。dependencies.components 因此**不是空数组**
-// ——这是本阶段唯一一个如此的组件。
+// 销售服务。同步调用只指向三个上游（mdm/customer、mdm/product、
+// erp/inventory，外加可选的 infra/workflow），它们都不回调本组件；
+// erp/finance 只经事件衔接（它消费 sales.order.created.v1，以
+// finance.credit.rejected.v1 回告信用否决），没有依赖边。
 type SalesServiceClient interface {
 	// ── 命令 ──
 	// CreateOrder 建 DRAFT（报价），⚠️ 不预留库存——预留发生在 ConfirmOrder
-	// 的 TCC 链里（设计计划 §3.1）。
+	// 的 TCC 链里。
 	CreateOrder(ctx context.Context, in *CreateOrderRequest, opts ...grpc.CallOption) (*CreateOrderResponse, error)
-	// ConfirmOrder 是本阶段最难的一段代码：校验客户/产品 → 本地信用额度
-	// 预判 → Reserve 库存 → 建单+发事件，失败按情形分别处理或补偿。
+	// ConfirmOrder 是一条 TCC 链：校验客户/产品 → 本地信用额度预判 →
+	// Reserve 库存 → 确认+发事件，失败按情形分别处理或补偿。
 	ConfirmOrder(ctx context.Context, in *ConfirmOrderRequest, opts ...grpc.CallOption) (*ConfirmOrderResponse, error)
 	CancelOrder(ctx context.Context, in *CancelOrderRequest, opts ...grpc.CallOption) (*CancelOrderResponse, error)
 	// ShipOrder 预留转实际出库（调 erp-inventory 的 ConfirmIssue）。
 	ShipOrder(ctx context.Context, in *ShipOrderRequest, opts ...grpc.CallOption) (*ShipOrderResponse, error)
-	// CalculatePriceDryRun 是纯函数、不落库——前端/BFF 严禁自己算钱
-	// （设计计划 §3.2、§8.4），只能调这个接口。
+	// CalculatePriceDryRun 是纯函数、不落库——前端/BFF 不自己算钱，
+	// 只调这个接口。
 	CalculatePriceDryRun(ctx context.Context, in *CalculatePriceDryRunRequest, opts ...grpc.CallOption) (*CalculatePriceDryRunResponse, error)
 	// ── 读 ──
 	GetOrder(ctx context.Context, in *GetOrderRequest, opts ...grpc.CallOption) (*Order, error)
 	ListOrders(ctx context.Context, in *ListOrdersRequest, opts ...grpc.CallOption) (*ListOrdersResponse, error)
-	// BatchGetOrder 是防 N+1 的唯一合法调用方式（§3.8）。
+	// BatchGetOrder：一次取多张订单，调用方不要逐张 GetOrder（N+1）。
 	BatchGetOrder(ctx context.Context, in *BatchGetOrderRequest, opts ...grpc.CallOption) (*BatchGetOrderResponse, error)
-	// GetOrderStatus 给上游（阶段三的 crm-opportunity）防"薛定谔的超时"用
-	// （§4.5），本组件自己调 erp-inventory 时也是这个判据。
+	// GetOrderStatus 给调用方在超时之后查清"请求到底有没有被处理"，
+	// 本组件自己调 erp-inventory 超时之后也是这个做法。
 	GetOrderStatus(ctx context.Context, in *GetOrderStatusRequest, opts ...grpc.CallOption) (*GetOrderStatusResponse, error)
 }
 
@@ -164,31 +164,31 @@ func (c *salesServiceClient) GetOrderStatus(ctx context.Context, in *GetOrderSta
 // All implementations must embed UnimplementedSalesServiceServer
 // for forward compatibility.
 //
-// 销售服务。本组件是阶段二**唯一的链上一环**（设计计划 §6）：四条强
-// 依赖边全在它身上（mdm/customer、mdm/product、erp/inventory、
-// erp/finance），零入边。dependencies.components 因此**不是空数组**
-// ——这是本阶段唯一一个如此的组件。
+// 销售服务。同步调用只指向三个上游（mdm/customer、mdm/product、
+// erp/inventory，外加可选的 infra/workflow），它们都不回调本组件；
+// erp/finance 只经事件衔接（它消费 sales.order.created.v1，以
+// finance.credit.rejected.v1 回告信用否决），没有依赖边。
 type SalesServiceServer interface {
 	// ── 命令 ──
 	// CreateOrder 建 DRAFT（报价），⚠️ 不预留库存——预留发生在 ConfirmOrder
-	// 的 TCC 链里（设计计划 §3.1）。
+	// 的 TCC 链里。
 	CreateOrder(context.Context, *CreateOrderRequest) (*CreateOrderResponse, error)
-	// ConfirmOrder 是本阶段最难的一段代码：校验客户/产品 → 本地信用额度
-	// 预判 → Reserve 库存 → 建单+发事件，失败按情形分别处理或补偿。
+	// ConfirmOrder 是一条 TCC 链：校验客户/产品 → 本地信用额度预判 →
+	// Reserve 库存 → 确认+发事件，失败按情形分别处理或补偿。
 	ConfirmOrder(context.Context, *ConfirmOrderRequest) (*ConfirmOrderResponse, error)
 	CancelOrder(context.Context, *CancelOrderRequest) (*CancelOrderResponse, error)
 	// ShipOrder 预留转实际出库（调 erp-inventory 的 ConfirmIssue）。
 	ShipOrder(context.Context, *ShipOrderRequest) (*ShipOrderResponse, error)
-	// CalculatePriceDryRun 是纯函数、不落库——前端/BFF 严禁自己算钱
-	// （设计计划 §3.2、§8.4），只能调这个接口。
+	// CalculatePriceDryRun 是纯函数、不落库——前端/BFF 不自己算钱，
+	// 只调这个接口。
 	CalculatePriceDryRun(context.Context, *CalculatePriceDryRunRequest) (*CalculatePriceDryRunResponse, error)
 	// ── 读 ──
 	GetOrder(context.Context, *GetOrderRequest) (*Order, error)
 	ListOrders(context.Context, *ListOrdersRequest) (*ListOrdersResponse, error)
-	// BatchGetOrder 是防 N+1 的唯一合法调用方式（§3.8）。
+	// BatchGetOrder：一次取多张订单，调用方不要逐张 GetOrder（N+1）。
 	BatchGetOrder(context.Context, *BatchGetOrderRequest) (*BatchGetOrderResponse, error)
-	// GetOrderStatus 给上游（阶段三的 crm-opportunity）防"薛定谔的超时"用
-	// （§4.5），本组件自己调 erp-inventory 时也是这个判据。
+	// GetOrderStatus 给调用方在超时之后查清"请求到底有没有被处理"，
+	// 本组件自己调 erp-inventory 超时之后也是这个做法。
 	GetOrderStatus(context.Context, *GetOrderStatusRequest) (*GetOrderStatusResponse, error)
 	mustEmbedUnimplementedSalesServiceServer()
 }
