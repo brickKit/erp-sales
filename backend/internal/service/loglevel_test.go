@@ -94,10 +94,10 @@ func TestCommandLogLevel_调用方的错误不记ERROR(t *testing.T) {
 	if _, err := svc.ConfirmOrder(ctx, cancelled.ID, uniqueSuffix("loglevel-confirm")); err == nil {
 		t.Fatal("已取消的单确认应失败")
 	}
-	// 挂起的单不能取消（FailedPrecondition → 400）
+	// 补偿挂起的单不能取消（FailedPrecondition → 400）
 	suspended := newOrder()
 	if err := besdk.WithTx(ctx, db, "erp_sales_rw", "erp_sales", func(tx *sql.Tx) error {
-		return repo.SuspendOrderTx(ctx, tx, mustID(t, suspended.ID), "测试挂起")
+		return repo.SuspendOrderTx(ctx, tx, mustID(t, suspended.ID), repo.ExceptionReasonCompensationFailed)
 	}); err != nil {
 		t.Fatal(err)
 	}
