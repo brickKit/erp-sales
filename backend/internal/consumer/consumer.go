@@ -75,6 +75,8 @@ func creditRejectedHandler() func(context.Context, *sql.Tx, besdk.Event) error {
 	}
 }
 
+// customerPayload 只取快照要的两个字段。credit_limit 在 updated.v1 里不是
+// 必填：没带时是空串，UpsertCustomerSnapshotCreditLimitTx 把它当作"额度不变"。
 type customerPayload struct {
 	ID          string `json:"id"`
 	CreditLimit string `json:"credit_limit"`

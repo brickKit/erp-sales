@@ -3,26 +3,38 @@ package repo
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
 )
 
-// UpsertCustomerSnapshotCreditLimitTx 维护 mdm-customer 的摘要副本——只
-// 取 credit_limit（额度值本身，设计计划 §5 的三方分工）。供
-// backend/internal/consumer 在 besdk.Consume 给的事务里调用（同
-// erp-inventory/erp-finance 的既有判据：接 *sql.Tx 不自己开
-// besdk.WithTx，那会开一个新事务和 Consume 已经打开的那个冲突）。
+// creditLimitPattern 是快照接受的额度写法：非负十进制数，整数最多 16 位、
+// 小数最多 2 位，正好装进 customer_snapshots.credit_limit 的 NUMERIC(18,2)。
+// "NaN"、"Infinity"、"1e3"、"0x10" 之类 PostgreSQL 也认的写法一律不收：
+// NaN 落进 NUMERIC 后排在一切数字之上，负数让这个客户的每一单都超额度。
+var creditLimitPattern = regexp.MustCompile(`^[0-9]{1,16}(\.[0-9]{1,2})?$`)
+
+// UpsertCustomerSnapshotCreditLimitTx 维护 mdm/customer 客户额度的本地副本，
+// 只取 credit_limit 一列。在 besdk.Consume 给的事务里调用（接 *sql.Tx，不自己
+// 开 besdk.WithTx：那会另开一个事务，与 Consume 已经打开的那个冲突）。
 //
-// ⚠️ WHERE version < $2 是按 version 单调更新（§3.10）。credit_exposure
-// 这一列不在这里动——它靠定时对账维护，不消费事件（设计计划 §9 第 6 条），
-// 两列的更新来源完全不同，不能用同一次 UPSERT 混着写。
+// creditLimit 为空表示事件没带这个字段（updated.v1 里它不是必填）：额度不变，
+// 只推进 version；从没见过的客户按额度 0 建快照。写法不合法时返回
+// ErrInvalidArgument，快照不动。
+//
+// WHERE version < EXCLUDED.version：按 version 单调更新，晚到的旧事件不覆盖
+// 新值。credit_exposure 不在这里改：它与 credit_limit 的来源不同，不能混在同
+// 一次 UPSERT 里写。
 func UpsertCustomerSnapshotCreditLimitTx(tx *sql.Tx, customerID, creditLimit string, version int64) error {
+	setLimit := "credit_limit = EXCLUDED.credit_limit, "
 	if creditLimit == "" {
-		creditLimit = "0"
+		creditLimit, setLimit = "0", ""
+	} else if !creditLimitPattern.MatchString(creditLimit) {
+		return fmt.Errorf("%w: credit_limit 必须是非负十进制数（整数最多 16 位、小数最多 2 位）：%q", ErrInvalidArgument, creditLimit)
 	}
 	_, err := tx.Exec(`
 		INSERT INTO customer_snapshots (customer_id, credit_limit, version)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (customer_id) DO UPDATE
-		   SET credit_limit = EXCLUDED.credit_limit, version = EXCLUDED.version, updated_at = now()
+		   SET `+setLimit+`version = EXCLUDED.version, updated_at = now()
 		 WHERE customer_snapshots.version < EXCLUDED.version`,
 		customerID, creditLimit, version)
 	if err != nil {
