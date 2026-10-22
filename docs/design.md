@@ -102,9 +102,9 @@
 | 发起交货 | 用户面 | `erp.sales.delivery` 的 `erp.sales.delivery.create` |
 | 交货列表与读取 | 用户面 | `erp.sales.delivery.read` |
 | 价格表的维护与读取 | 用户面 | `erp.sales.price_list` 的 `erp.sales.price_list.manage`、`erp.sales.price_list.read` |
-| 出账认领的认领、续期、确认、正式化、释放；可出账台账的读取（出账来源，协议 05） | 系统面 `BillingSourceService` | `erp.sales.system` 的 `erp.sales.system.billing`，只授予 `erp/billing` 的服务身份 |
-| 订单的系统读取（出账取明细、打印取数据） | 系统面 | `erp.sales.system.read` |
-| 修订、退货与折让、款到发货、服务完成的登记、期初导入、关闭未交货部分 | — | 以后 |
+| 可出账台账的读取与出账认领的认领、续期、确认、正式化、释放（出账来源，协议 05；冲回以后） | 系统面 `BillingSourceService` | `erp.sales.system` 的 `erp.sales.system.billing`，只授予 `erp/billing` 的服务身份 |
+| 订单的系统读取（`OrderService.Read`：出账取明细与打印数据） | 系统面 | `erp.sales.system.read` |
+| 修订、关闭未交货部分、退货与折让、款到发货、服务完成的登记、期初导入 | — | 以后（契约已有修订、关闭、退货的路径；退货的操作 `erp.sales.return.edit`） |
 
 数据范围：报价、订单与交货的资源带三个维度：法人（值集合）、部门（组织树，行上是部门身份，查询经 `org_unit_projection` 编译，安全 07）、负责人（主体，“销售只看自己的订单”）。交货继承订单的三个维度。
 
@@ -112,10 +112,8 @@
 
 流 `erp.sales`：
 
-- 报价状态、订单状态：可覆盖的完整状态事件（带商机参考，本版为空）。
-- 确认完成与确认失败：订单确认过程的结果（增量，带过程身份与原因）。
-- 交货已过账：增量事实（交货、订单行、数量）；以后复杂仓储订阅“交货请求”。
-- 来源额度变化：可出账台账的变化（增量事实，协议 05），供出账显示与对账。
+- 完整状态事件（可覆盖）：报价 `erp.quotation.changed.v1`（带商机参考，本版为空）、订单 `erp.sales_order.changed.v1`（也是 `OrderService.Read` 的数据）、交货 `erp.delivery.changed.v1`、价格表 `erp.price_list.changed.v1` 与价格 `erp.price_list_item.changed.v1`。
+- 增量事实：确认结束 `erp.sales_order.confirmation_ended.v1`（事实身份是过程身份，结果与原因）；交货已过账 `erp.delivery.posted.v1`（以后复杂仓储订阅“交货请求”）；可出账台账变化 `erp.billable.changed.v1`（协议 05，供出账显示与对账）。
 
 ## 依赖
 

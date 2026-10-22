@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brickkit.dev/erp-sales/events/erp.price_list_item.changed.v1.schema.json",
+  "title": "erp.price_list_item.changed.v1",
+  "description": "One price of a price list (a full-state event): net of tax, per unit, valid from a date.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "price_list_id",
+    "product_id",
+    "unit",
+    "price",
+    "valid_from",
+    "valid_to",
+    "version",
+    "updated_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "price_list_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "product_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "unit": {
+      "type": "string"
+    },
+    "price": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?$",
+      "description": "a non-negative decimal string"
+    },
+    "valid_from": {
+      "type": "string",
+      "format": "date"
+    },
+    "valid_to": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

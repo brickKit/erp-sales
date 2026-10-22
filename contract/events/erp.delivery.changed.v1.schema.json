@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brickkit.dev/erp-sales/events/erp.delivery.changed.v1.schema.json",
+  "title": "erp.delivery.changed.v1",
+  "description": "A delivery (a full-state event); the record ID is its UUIDv7 and also the inventory consumption ID.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "number",
+    "order_id",
+    "legal_entity_id",
+    "state",
+    "reason",
+    "business_date",
+    "lines",
+    "owner_id",
+    "department_id",
+    "version",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "number": {
+      "type": "string"
+    },
+    "order_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "legal_entity_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "state": {
+      "enum": [
+        "issuing",
+        "posted",
+        "failed"
+      ]
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "failed: the inventory's reasons"
+    },
+    "business_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "lines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "order_line_id",
+          "product_id",
+          "warehouse_id",
+          "quantity",
+          "base_quantity",
+          "batch",
+          "serials"
+        ],
+        "properties": {
+          "order_line_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "product_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "warehouse_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "quantity": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "sales unit"
+          },
+          "base_quantity": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "a non-negative decimal string"
+          },
+          "batch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "serials": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "owner_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "department_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

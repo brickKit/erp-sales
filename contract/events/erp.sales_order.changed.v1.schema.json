@@ -1,0 +1,403 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brickkit.dev/erp-sales/events/erp.sales_order.changed.v1.schema.json",
+  "title": "erp.sales_order.changed.v1",
+  "description": "A sales order (a full-state event); the record ID is its UUIDv7. Also the data of OrderService.Read.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "number",
+    "state",
+    "business_date",
+    "exchange_rate",
+    "revision",
+    "quotation_id",
+    "confirmation_id",
+    "reason",
+    "lines",
+    "totals",
+    "version",
+    "created_at",
+    "updated_at",
+    "legal_entity_id",
+    "customer",
+    "currency",
+    "owner_id",
+    "department_id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "number": {
+      "type": "string"
+    },
+    "legal_entity_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "partner_id",
+        "name",
+        "tax_id"
+      ],
+      "properties": {
+        "partner_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "tax_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "owner_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "the owner's platform principal"
+    },
+    "department_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid",
+      "description": "an mdm/org unit"
+    },
+    "state": {
+      "enum": [
+        "draft",
+        "confirming",
+        "confirmed",
+        "completed",
+        "cancelled"
+      ],
+      "description": "later: closed"
+    },
+    "business_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "exchange_rate": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rate",
+            "date",
+            "type",
+            "record_id",
+            "record_version"
+          ],
+          "properties": {
+            "rate": {
+              "type": "string",
+              "pattern": "^[0-9]+(\\.[0-9]+)?$",
+              "description": "a non-negative decimal string"
+            },
+            "date": {
+              "type": "string",
+              "format": "date"
+            },
+            "type": {
+              "type": "string"
+            },
+            "record_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "record_version": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "null when the currency is the legal entity's; snapshot at confirmation"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "quotation_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "confirmation_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid",
+      "description": "the last confirmation process"
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "why the last confirmation failed: out_of_stock, over_limit, no_limit, limit_suspended, timed_out, dependency_unavailable, ineligible_*"
+    },
+    "lines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "line_no",
+          "kind",
+          "product",
+          "quantity",
+          "unit",
+          "conversion_factor",
+          "base_quantity",
+          "unit_price",
+          "price_source",
+          "price_list_item_id",
+          "tax_rate",
+          "tax_source",
+          "net",
+          "tax",
+          "warehouse_id",
+          "delivered_quantity",
+          "billable",
+          "claimed",
+          "billed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "line_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "kind": {
+            "enum": [
+              "goods",
+              "service"
+            ]
+          },
+          "product": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "code",
+              "name",
+              "base_unit"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "code": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "base_unit": {
+                "type": "string"
+              }
+            }
+          },
+          "quantity": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "a non-negative decimal string"
+          },
+          "unit": {
+            "type": "string",
+            "description": "the sales unit (a UN/ECE code or a packaging unit of the product)"
+          },
+          "conversion_factor": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "base units per sales unit, snapshot from mdm/product"
+          },
+          "base_quantity": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "a non-negative decimal string"
+          },
+          "unit_price": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "net of tax, per sales unit"
+          },
+          "price_source": {
+            "enum": [
+              "price_list",
+              "manual"
+            ]
+          },
+          "price_list_item_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "tax_rate": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "e.g. 0.13"
+          },
+          "tax_source": {
+            "enum": [
+              "manual"
+            ],
+            "description": "erp/tax later"
+          },
+          "net": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "a non-negative decimal string"
+          },
+          "tax": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "a non-negative decimal string"
+          },
+          "warehouse_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "goods only"
+          },
+          "delivered_quantity": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "sales unit"
+          },
+          "billable": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "quantity",
+              "amount"
+            ],
+            "properties": {
+              "quantity": {
+                "type": "string",
+                "pattern": "^[0-9]+(\\.[0-9]+)?$",
+                "description": "a non-negative decimal string"
+              },
+              "amount": {
+                "type": "string",
+                "pattern": "^[0-9]+(\\.[0-9]+)?$",
+                "description": "a non-negative decimal string"
+              }
+            }
+          },
+          "claimed": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "quantity",
+              "amount"
+            ],
+            "properties": {
+              "quantity": {
+                "type": "string",
+                "pattern": "^[0-9]+(\\.[0-9]+)?$",
+                "description": "a non-negative decimal string"
+              },
+              "amount": {
+                "type": "string",
+                "pattern": "^[0-9]+(\\.[0-9]+)?$",
+                "description": "a non-negative decimal string"
+              }
+            }
+          },
+          "billed": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "quantity",
+              "amount"
+            ],
+            "properties": {
+              "quantity": {
+                "type": "string",
+                "pattern": "^[0-9]+(\\.[0-9]+)?$",
+                "description": "a non-negative decimal string"
+              },
+              "amount": {
+                "type": "string",
+                "pattern": "^[0-9]+(\\.[0-9]+)?$",
+                "description": "a non-negative decimal string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "net",
+        "tax",
+        "gross"
+      ],
+      "properties": {
+        "net": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "a non-negative decimal string"
+        },
+        "tax": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "a non-negative decimal string"
+        },
+        "gross": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "a non-negative decimal string"
+        }
+      }
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

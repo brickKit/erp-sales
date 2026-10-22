@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brickkit.dev/erp-sales/events/erp.quotation.changed.v1.schema.json",
+  "title": "erp.quotation.changed.v1",
+  "description": "A quotation (a full-state event); the record ID is its UUIDv7. It reserves nothing; accepting turns it into an order draft.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "number",
+    "state",
+    "valid_until",
+    "order_id",
+    "opportunity_ref",
+    "lines",
+    "totals",
+    "version",
+    "created_at",
+    "updated_at",
+    "legal_entity_id",
+    "customer",
+    "currency",
+    "owner_id",
+    "department_id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "number": {
+      "type": "string"
+    },
+    "legal_entity_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "customer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "partner_id",
+        "name",
+        "tax_id"
+      ],
+      "properties": {
+        "partner_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "tax_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "owner_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "the owner's platform principal"
+    },
+    "department_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid",
+      "description": "an mdm/org unit"
+    },
+    "state": {
+      "enum": [
+        "draft",
+        "sent",
+        "accepted",
+        "cancelled",
+        "expired"
+      ]
+    },
+    "valid_until": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "order_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "opportunity_ref": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "crm/opportunity later"
+    },
+    "lines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "line_no",
+          "kind",
+          "product",
+          "quantity",
+          "unit",
+          "conversion_factor",
+          "base_quantity",
+          "unit_price",
+          "price_source",
+          "price_list_item_id",
+          "tax_rate",
+          "tax_source",
+          "net",
+          "tax"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "line_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "kind": {
+            "enum": [
+              "goods",
+              "service"
+            ]
+          },
+          "product": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "code",
+              "name",
+              "base_unit"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "code": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "base_unit": {
+                "type": "string"
+              }
+            }
+          },
+          "quantity": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "a non-negative decimal string"
+          },
+          "unit": {
+            "type": "string",
+            "description": "the sales unit (a UN/ECE code or a packaging unit of the product)"
+          },
+          "conversion_factor": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "base units per sales unit, snapshot from mdm/product"
+          },
+          "base_quantity": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "a non-negative decimal string"
+          },
+          "unit_price": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "net of tax, per sales unit"
+          },
+          "price_source": {
+            "enum": [
+              "price_list",
+              "manual"
+            ]
+          },
+          "price_list_item_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "tax_rate": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "e.g. 0.13"
+          },
+          "tax_source": {
+            "enum": [
+              "manual"
+            ],
+            "description": "erp/tax later"
+          },
+          "net": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "a non-negative decimal string"
+          },
+          "tax": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "a non-negative decimal string"
+          }
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "net",
+        "tax",
+        "gross"
+      ],
+      "properties": {
+        "net": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "a non-negative decimal string"
+        },
+        "tax": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "a non-negative decimal string"
+        },
+        "gross": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "a non-negative decimal string"
+        }
+      }
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

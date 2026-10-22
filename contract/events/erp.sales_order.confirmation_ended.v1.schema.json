@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brickkit.dev/erp-sales/events/erp.sales_order.confirmation_ended.v1.schema.json",
+  "title": "erp.sales_order.confirmation_ended.v1",
+  "description": "A confirmation process reached its end (an incremental fact; fact_id is the process ID).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fact_id",
+    "order_id",
+    "outcome",
+    "reason",
+    "occurred_at"
+  ],
+  "properties": {
+    "fact_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "order_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "outcome": {
+      "enum": [
+        "confirmed",
+        "rejected",
+        "cancelled"
+      ]
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

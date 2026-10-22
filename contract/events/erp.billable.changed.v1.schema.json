@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brickkit.dev/erp-sales/events/erp.billable.changed.v1.schema.json",
+  "title": "erp.billable.changed.v1",
+  "description": "The billable ledger of one order line changed (an incremental fact of protocol 05; fact_id is unique per change). Carries the ledger after the change.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fact_id",
+    "order_id",
+    "order_line_id",
+    "cause",
+    "billable",
+    "claimed",
+    "billed",
+    "occurred_at"
+  ],
+  "properties": {
+    "fact_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "order_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "order_line_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "cause": {
+      "enum": [
+        "delivery",
+        "service_confirmed",
+        "claim",
+        "renew",
+        "confirm",
+        "formalize",
+        "release",
+        "expire"
+      ]
+    },
+    "billable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "quantity",
+        "amount"
+      ],
+      "properties": {
+        "quantity": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "a non-negative decimal string"
+        },
+        "amount": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "a non-negative decimal string"
+        }
+      }
+    },
+    "claimed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "quantity",
+        "amount"
+      ],
+      "properties": {
+        "quantity": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "a non-negative decimal string"
+        },
+        "amount": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "a non-negative decimal string"
+        }
+      }
+    },
+    "billed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "quantity",
+        "amount"
+      ],
+      "properties": {
+        "quantity": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "a non-negative decimal string"
+        },
+        "amount": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "a non-negative decimal string"
+        }
+      }
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

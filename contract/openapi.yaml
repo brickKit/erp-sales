@@ -1,0 +1,905 @@
+openapi: 3.1.0
+info:
+  title: erp/sales user surface
+  version: 3.0.0
+  description: 'Quotations, sales orders and their confirmation, deliveries and price lists for people and the front end.
+    Every route needs a platform access token and the operation in x-operation; what the caller may not see answers 404 (quotations,
+    orders and deliveries carry the legal entity, department and owner dimensions). Errors are application/problem+json with
+    a reason. Lists page by cursor only (protocol 14). Quantities and amounts are decimal strings. Revisions, closing, returns,
+    allowances and exchanges, cash before delivery, drop shipping, consignment and pricing rules are in the contract but not
+    in this version: they answer CAPABILITY_UNSUPPORTED (D75). The billing source and the order read are on the system surface
+    (proto).'
+paths:
+  /api/sales/quotations:
+    get:
+      operationId: listQuotations
+      x-operation: erp.sales.quotation.read
+      parameters:
+      - &id003
+        name: legal_entity_id
+        in: query
+        schema: &id001
+          type: string
+          format: uuid
+      - &id004
+        name: customer_id
+        in: query
+        schema: *id001
+      - &id005
+        name: owner_id
+        in: query
+        schema: *id001
+      - &id006
+        name: department_id
+        in: query
+        schema: *id001
+      - &id007
+        name: q
+        in: query
+        schema:
+          type: string
+        description: keyword over the number and the customer's name
+      - name: state
+        in: query
+        schema:
+          enum:
+          - draft
+          - sent
+          - accepted
+          - cancelled
+          - expired
+      - $ref: '#/components/parameters/cursor'
+      - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: one page, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - quotations
+                - next_cursor
+                properties:
+                  quotations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Quotation'
+                  next_cursor:
+                    type: string
+        default:
+          $ref: '#/components/responses/problem'
+    post:
+      operationId: createQuotation
+      x-operation: erp.sales.quotation.edit
+      summary: Create a quotation draft; needs an Idempotency-Key
+      parameters:
+      - &id008
+        name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuotationIn'
+      responses:
+        '200':
+          description: the quotation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quotation'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/quotations/{id}:
+    parameters: &id002
+    - &id009
+      $ref: '#/components/parameters/id'
+    get:
+      operationId: getQuotation
+      x-operation: erp.sales.quotation.read
+      responses:
+        '200':
+          description: the quotation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quotation'
+        default:
+          $ref: '#/components/responses/problem'
+    patch:
+      operationId: updateQuotation
+      x-operation: erp.sales.quotation.edit
+      summary: Change a draft (lines are replaced whole); with version, only that version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuotationPatch'
+      responses:
+        '200':
+          description: the quotation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quotation'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/quotations/{id}/send:
+    parameters: *id002
+    post:
+      operationId: sendQuotation
+      x-operation: erp.sales.quotation.edit
+      summary: Mark a draft sent to the customer
+      responses:
+        '200':
+          description: 'the quotation (accept: with order_id)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quotation'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/quotations/{id}/cancel:
+    parameters: *id002
+    post:
+      operationId: cancelQuotation
+      x-operation: erp.sales.quotation.edit
+      summary: Cancel a draft or sent quotation
+      responses:
+        '200':
+          description: 'the quotation (accept: with order_id)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quotation'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/quotations/{id}/accept:
+    parameters: *id002
+    post:
+      operationId: acceptQuotation
+      x-operation: erp.sales.quotation.edit
+      summary: 'Accept a sent quotation: it becomes an order draft with the same lines (prices kept)'
+      responses:
+        '200':
+          description: 'the quotation (accept: with order_id)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quotation'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/orders:
+    get:
+      operationId: listOrders
+      x-operation: erp.sales.order.read
+      parameters:
+      - *id003
+      - *id004
+      - *id005
+      - *id006
+      - *id007
+      - name: state
+        in: query
+        schema:
+          enum:
+          - draft
+          - confirming
+          - confirmed
+          - completed
+          - cancelled
+      - name: to_deliver
+        in: query
+        schema:
+          type: boolean
+        description: confirmed orders with goods not yet delivered
+      - name: to_bill
+        in: query
+        schema:
+          type: boolean
+        description: orders with billable left
+      - $ref: '#/components/parameters/cursor'
+      - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: one page, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - orders
+                - next_cursor
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Order'
+                  next_cursor:
+                    type: string
+        default:
+          $ref: '#/components/responses/problem'
+    post:
+      operationId: createOrder
+      x-operation: erp.sales.order.edit
+      summary: Create an order draft; needs an Idempotency-Key
+      parameters:
+      - *id008
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderIn'
+      responses:
+        '200':
+          description: the order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/orders/{id}:
+    parameters: *id002
+    get:
+      operationId: getOrder
+      x-operation: erp.sales.order.read
+      responses:
+        '200':
+          description: the order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          $ref: '#/components/responses/problem'
+    patch:
+      operationId: updateOrder
+      x-operation: erp.sales.order.edit
+      summary: Change a draft (lines are replaced whole; prices are taken again only for changed lines); with version, only
+        that version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderPatch'
+      responses:
+        '200':
+          description: the order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/orders/{id}/confirm:
+    parameters: *id002
+    post:
+      operationId: confirmOrder
+      x-operation: erp.sales.order.confirm
+      summary: 'Confirm a draft: evidence, then reserve stock and credit (protocol 04). Answers within the sync budget (3
+        s) confirmed or rejected, otherwise processing with the confirmation ID; the same key again answers the same process'
+      parameters:
+      - *id008
+      responses:
+        '200':
+          description: the outcome
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmAnswer'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/orders/{id}/confirmations/{confirmation_id}:
+    parameters:
+    - *id009
+    - name: confirmation_id
+      in: path
+      required: true
+      schema: *id001
+    get:
+      operationId: getConfirmation
+      x-operation: erp.sales.order.read
+      responses:
+        '200':
+          description: the confirmation process
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Confirmation'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/orders/{id}/cancel:
+    parameters: *id002
+    post:
+      operationId: cancelOrder
+      x-operation: erp.sales.order.cancel
+      summary: Cancel a draft, a confirming order (its process cancels the branches) or a confirmed order with nothing delivered
+      parameters:
+      - *id008
+      responses:
+        '200':
+          description: the order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/orders/{id}/close:
+    post:
+      operationId: closeOrder
+      x-operation: erp.sales.order.cancel
+      summary: Close what is not delivered of a confirmed order (not in this version, CAPABILITY_UNSUPPORTED)
+      parameters:
+      - $ref: '#/components/parameters/id'
+      - *id008
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/orders/{id}/revisions:
+    post:
+      operationId: reviseOrder
+      x-operation: erp.sales.order.edit
+      summary: Revise a confirmed order (D33) (not in this version, CAPABILITY_UNSUPPORTED)
+      parameters:
+      - $ref: '#/components/parameters/id'
+      - *id008
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/deliveries:
+    get:
+      operationId: listDeliveries
+      x-operation: erp.sales.delivery.read
+      parameters:
+      - name: order_id
+        in: query
+        schema: *id001
+      - name: legal_entity_id
+        in: query
+        schema: *id001
+      - name: state
+        in: query
+        schema:
+          enum:
+          - issuing
+          - posted
+          - failed
+      - $ref: '#/components/parameters/cursor'
+      - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: one page, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - deliveries
+                - next_cursor
+                properties:
+                  deliveries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Delivery'
+                  next_cursor:
+                    type: string
+        default:
+          $ref: '#/components/responses/problem'
+    post:
+      operationId: createDelivery
+      x-operation: erp.sales.delivery.create
+      summary: 'Deliver goods lines of a confirmed order: the inventory issues them and consumes the order''s branch; needs
+        an Idempotency-Key'
+      parameters:
+      - *id008
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeliveryIn'
+      responses:
+        '200':
+          description: the delivery (issuing when the inventory's answer is not known yet)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/deliveries/{id}:
+    parameters: *id002
+    get:
+      operationId: getDelivery
+      x-operation: erp.sales.delivery.read
+      responses:
+        '200':
+          description: the delivery
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delivery'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/price-lists:
+    get:
+      operationId: listPriceLists
+      x-operation: erp.sales.price_list.read
+      parameters:
+      - name: legal_entity_id
+        in: query
+        schema: *id001
+      - name: currency
+        in: query
+        schema:
+          type: string
+      - $ref: '#/components/parameters/cursor'
+      - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: one page, by code
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - price_lists
+                - next_cursor
+                properties:
+                  price_lists:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PriceList'
+                  next_cursor:
+                    type: string
+        default:
+          $ref: '#/components/responses/problem'
+    post:
+      operationId: createPriceList
+      x-operation: erp.sales.price_list.manage
+      summary: Create a price list of a legal entity and currency; needs an Idempotency-Key
+      parameters:
+      - *id008
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - legal_entity_id
+              - currency
+              - code
+              - name
+              properties:
+                legal_entity_id: *id001
+                currency:
+                  type: string
+                  pattern: ^[A-Z]{3}$
+                code:
+                  type: string
+                name:
+                  type: string
+      responses:
+        '200':
+          description: the price list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceList'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/price-lists/{id}:
+    parameters: *id002
+    get:
+      operationId: getPriceList
+      x-operation: erp.sales.price_list.read
+      responses:
+        '200':
+          description: the price list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceList'
+        default:
+          $ref: '#/components/responses/problem'
+    patch:
+      operationId: updatePriceList
+      x-operation: erp.sales.price_list.manage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                state:
+                  enum:
+                  - active
+                  - inactive
+                version:
+                  type: integer
+                  minimum: 1
+      responses:
+        '200':
+          description: the price list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceList'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/price-lists/{id}/items:
+    get:
+      operationId: listPrices
+      x-operation: erp.sales.price_list.read
+      parameters:
+      - name: product_id
+        in: query
+        schema: *id001
+      - name: 'on'
+        in: query
+        schema:
+          type: string
+          format: date
+        description: only prices valid on this date
+      - $ref: '#/components/parameters/cursor'
+      - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: one page, by product and valid_from
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - items
+                - next_cursor
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PriceListItem'
+                  next_cursor:
+                    type: string
+        default:
+          $ref: '#/components/responses/problem'
+    parameters: *id002
+    post:
+      operationId: setPrice
+      x-operation: erp.sales.price_list.manage
+      summary: Add a price valid from a date; the previous price of the same product and unit ends the day before
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+              - product_id
+              - unit
+              - price
+              - valid_from
+              properties:
+                product_id: *id001
+                unit:
+                  type: string
+                price:
+                  $ref: '#/components/schemas/Decimal'
+                valid_from:
+                  type: string
+                  format: date
+      responses:
+        '200':
+          description: the price
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceListItem'
+        default:
+          $ref: '#/components/responses/problem'
+  /api/sales/returns:
+    post:
+      operationId: createReturn
+      x-operation: erp.sales.return.edit
+      summary: Register a return, allowance or exchange (not in this version, CAPABILITY_UNSUPPORTED)
+      parameters:
+      - *id008
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        default:
+          $ref: '#/components/responses/problem'
+components:
+  parameters:
+    id:
+      name: id
+      in: path
+      required: true
+      schema: *id001
+    cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+  responses:
+    problem:
+      description: an error (application/problem+json with reason)
+      content:
+        application/problem+json:
+          schema:
+            type: object
+            required:
+            - reason
+            properties:
+              reason:
+                type: string
+              detail:
+                type: string
+  schemas:
+    Decimal:
+      type: string
+      pattern: ^[0-9]+(\.[0-9]+)?$
+      description: a decimal string
+    LineIn:
+      type: object
+      additionalProperties: false
+      required:
+      - product_id
+      - quantity
+      - unit
+      - tax_rate
+      properties:
+        product_id: *id001
+        quantity:
+          $ref: '#/components/schemas/Decimal'
+        unit:
+          type: string
+        warehouse_id:
+          type: string
+          format: uuid
+          description: required for goods; must belong to the order's legal entity
+        unit_price:
+          $ref: '#/components/schemas/Decimal'
+          description: omit to take the price list's
+        tax_rate:
+          $ref: '#/components/schemas/Decimal'
+          description: entered by hand (erp/tax later)
+    QuotationIn:
+      type: object
+      additionalProperties: false
+      required:
+      - legal_entity_id
+      - customer_id
+      - currency
+      - lines
+      properties:
+        legal_entity_id: *id001
+        customer_id: *id001
+        currency: &id010
+          type: string
+          pattern: ^[A-Z]{3}$
+        owner_id: &id011
+          type: string
+          format: uuid
+          description: 'default: the caller'
+        department_id: *id001
+        valid_until:
+          type: string
+          format: date
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/LineIn'
+    QuotationPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        owner_id: *id001
+        department_id: *id001
+        valid_until:
+          type: string
+          format: date
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/LineIn'
+        version:
+          type: integer
+          minimum: 1
+    OrderIn:
+      type: object
+      additionalProperties: false
+      required:
+      - legal_entity_id
+      - customer_id
+      - currency
+      - lines
+      properties:
+        legal_entity_id: *id001
+        customer_id: *id001
+        currency: *id010
+        owner_id: *id011
+        department_id: *id001
+        business_date:
+          type: string
+          format: date
+          description: 'default: the legal entity''s today'
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/LineIn'
+    OrderPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        owner_id: *id001
+        department_id: *id001
+        business_date:
+          type: string
+          format: date
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/LineIn'
+        version:
+          type: integer
+          minimum: 1
+    ConfirmAnswer:
+      type: object
+      required:
+      - outcome
+      - confirmation_id
+      - reason
+      - order
+      properties:
+        outcome:
+          enum:
+          - confirmed
+          - rejected
+          - processing
+        confirmation_id: *id001
+        reason:
+          type:
+          - string
+          - 'null'
+        order:
+          $ref: '#/components/schemas/Order'
+    Confirmation:
+      type: object
+      required:
+      - id
+      - order_id
+      - state
+      - participants
+      - reason
+      - started_at
+      - updated_at
+      properties:
+        id: *id001
+        order_id: *id001
+        state:
+          enum:
+          - reserving
+          - committing
+          - confirmed
+          - rejecting
+          - rejected
+          - cancelling
+          - cancelled
+        participants:
+          type: array
+          items:
+            type: object
+            required:
+            - component
+            - branch_id
+            - state
+            properties:
+              component:
+                enum:
+                - erp/inventory
+                - erp/credit
+              branch_id: *id001
+              state:
+                type: string
+                description: the branch state last known, or unknown
+        reason:
+          type:
+          - string
+          - 'null'
+        started_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    DeliveryIn:
+      type: object
+      additionalProperties: false
+      required:
+      - order_id
+      - lines
+      properties:
+        order_id: *id001
+        business_date:
+          type: string
+          format: date
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - order_line_id
+            - quantity
+            properties:
+              order_line_id: *id001
+              quantity:
+                $ref: '#/components/schemas/Decimal'
+                description: sales unit
+              batch:
+                type: string
+              serials:
+                type: array
+                items:
+                  type: string
+    Quotation:
+      $ref: events/erp.quotation.changed.v1.schema.json
+    Order:
+      $ref: events/erp.sales_order.changed.v1.schema.json
+    Delivery:
+      $ref: events/erp.delivery.changed.v1.schema.json
+    PriceList:
+      $ref: events/erp.price_list.changed.v1.schema.json
+    PriceListItem:
+      $ref: events/erp.price_list_item.changed.v1.schema.json

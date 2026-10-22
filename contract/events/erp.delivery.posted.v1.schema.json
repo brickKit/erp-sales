@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brickkit.dev/erp-sales/events/erp.delivery.posted.v1.schema.json",
+  "title": "erp.delivery.posted.v1",
+  "description": "A delivery was issued by the inventory (an incremental fact; fact_id is the delivery ID).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fact_id",
+    "order_id",
+    "legal_entity_id",
+    "lines",
+    "occurred_at"
+  ],
+  "properties": {
+    "fact_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "order_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "legal_entity_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "lines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "order_line_id",
+          "product_id",
+          "warehouse_id",
+          "quantity",
+          "base_quantity",
+          "batch",
+          "serials"
+        ],
+        "properties": {
+          "order_line_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "product_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "warehouse_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "quantity": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "sales unit"
+          },
+          "base_quantity": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$",
+            "description": "a non-negative decimal string"
+          },
+          "batch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "serials": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

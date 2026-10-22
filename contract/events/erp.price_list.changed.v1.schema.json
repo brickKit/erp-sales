@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brickkit.dev/erp-sales/events/erp.price_list.changed.v1.schema.json",
+  "title": "erp.price_list.changed.v1",
+  "description": "A price list of one legal entity and currency (a full-state event, without its items).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "legal_entity_id",
+    "currency",
+    "code",
+    "name",
+    "state",
+    "version",
+    "updated_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "legal_entity_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "code": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "active",
+        "inactive"
+      ]
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
