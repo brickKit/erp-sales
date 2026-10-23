@@ -16,7 +16,7 @@
 | `sales/quotations.go` | 报价：新建、修改、读取、发出、取消、转订单草稿 |
 | `sales/orders.go` | 订单草稿：新建、读取、修改（确认中拒绝，RS09） |
 | `sales/confirmation.go` | 订单确认：过程的类型与读取、提交确认（取证、T1）、过程的查询 |
-| `sales/advance.go` | 过程的推进：`advance`（同步路径与恢复工作项共用）、`send`、`step`、`decide`（协议 04 的过程表）、`finish`、恢复工作项与死信 |
+| `sales/advance.go` | 过程的推进：`advance`（同步路径与恢复工作项共用）、`send`、`step`、`decide`（协议 04 的过程表）、`finish`、恢复工作项与死信；`setOrderState` 是订单状态的唯一写入处（确认、退回草稿、取消、完成的每条路径都经过它，订单事件与审计在这里写） |
 | `sales/cancel.go` | 取消订单；种类为 `cancel`、`release` 的过程（`startBranchProcess`） |
 | `sales/delivery.go` | 交货：T1 建交货、库存出库（交货身份即消耗身份）、T2 过账与可出账台账；恢复工作项 |
 | `sales/billing.go` | 出账来源（`BillingSourceService`）：台账、认领、续期、确认、正式化、释放、到期；订单完成；`OrderService.Read` |
@@ -33,6 +33,7 @@
 | 取价、行金额、税额 | `docs/rules/pricing.md` | `lines.go` 的 `buildLines`、`pricing.go` 的 `priceOf` |
 | 可出账额度怎样增长 | `docs/rules/pricing.md` 的“可出账金额” | `delivery.go` 的 `post`；服务明细在 `advance.go` 的 `finish` |
 | 认领的守卫 | `docs/flows/delivery-and-billing.md` 与协议 05 | `billing.go`；集成测试的 `billingSource` 一步 |
+| 订单状态变化时要做的事（发事件、通知意图、审计） | `advance.go` 的 `setOrderState` | 取消有三条路径（草稿取消在 `cancel.go`，确认中与已确认的取消在过程结束时），都汇到这里 |
 | 一个维度、一个操作 | `definition.go` | `docs/design.md` 的命令与查询、`BRICKKIT.md` 的契约索引 |
 | 加字段、加接口、改事件 | 装配项目 be-assembly-standard 规范里的“改动配方” | `docs/design.md` 的数据与命令 |
 
