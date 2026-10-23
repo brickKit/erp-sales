@@ -10,9 +10,9 @@
 //   - quotations in CN01: drafts, sent, cancelled and accepted ones (an accepted one is an order draft);
 //   - orders in CN01 (CNY, and EUR for customers abroad), ES01 and US01, spread over departments and owners, in every
 //     state: drafts; confirmed (stock and credit held and committed); refused at confirmation and back to draft with
-//     the reason (no credit limit, over a small limit, not enough stock in BJ-01); cancelled drafts; confirmed then
-//     cancelled; delivered in full; delivered in part. Only goods tracked by batch or not tracked are ordered, so the
-//     deliveries need no serial numbers.
+//     the reason, the kinds taking turns (no credit limit, over a small limit, not enough stock in BJ-01); cancelled
+//     drafts; confirmed then cancelled; delivered in full; delivered in part. Only goods tracked by batch or not
+//     tracked are ordered, so the deliveries need no serial numbers.
 //
 // Price lists are looked up by code. Quotations and orders are seeded once, into a legal entity that has no order yet;
 // a run that broke off is finished by running it again within a day (the idempotency keys answer the requests already
@@ -119,7 +119,7 @@ func salesWork(les, depts []string) []sdkauthz.Segment {
 
 type product struct {
 	id, code, kind, tracking, unit string
-	sellable                      map[string]bool // legal entity → sellable
+	sellable                       map[string]bool // legal entity → sellable
 }
 
 type customer struct{ id, currency string }
@@ -341,6 +341,18 @@ func orders(c client, w world, le string, owners map[string]string) int {
 	if len(good) == 0 {
 		fail("%s has no customer with a large or no credit limit: run erp/credit's seed first", le)
 	}
+	// the refusals at confirmation take turns among the kinds this legal entity can show (ES01 holds and counts a
+	// customer without a limit; only CN01 has a warehouse short of stock)
+	var refusals []string
+	if le != "ES01" && len(noLimit) > 0 {
+		refusals = append(refusals, "no_limit")
+	}
+	if len(small) > 0 && len(services) > 0 {
+		refusals = append(refusals, "over_limit")
+	}
+	if le == "CN01" {
+		refusals = append(refusals, "stock")
+	}
 	type slot struct{ dept, owner string }
 	var slots []slot
 	switch le {
@@ -426,12 +438,16 @@ func orders(c client, w world, le string, owners map[string]string) int {
 		cu := good[n%len(good)]
 		whCode := wh
 		qty := 1 + n%4
-		switch {
-		case state == 2 && le != "ES01" && len(noLimit) > 0: // refused: no credit limit under a block policy
+		refusal := ""
+		if state == 2 && len(refusals) > 0 {
+			refusal = refusals[(n/10)%len(refusals)]
+		}
+		switch refusal {
+		case "no_limit": // refused: no credit limit under a block policy
 			cu = noLimit[n%len(noLimit)]
-		case state == 2 && len(small) > 0: // refused: over a 20,000 limit
-			cu, qty = small[n%len(small)], 900
-		case state == 2 && le == "CN01": // refused: not enough stock in Beijing (TEA-00-TIN has one there)
+		case "over_limit": // refused: over a 20,000 limit (the lines below)
+			cu = small[n%len(small)]
+		case "stock": // refused: not enough stock in Beijing (TEA-00-TIN has one there)
 			whCode = "BJ-01"
 		}
 		if le == "CN01" && state == 8 && len(foreign) > 0 { // a confirmed order in the customer's currency (EUR, USD)
@@ -446,6 +462,10 @@ func orders(c client, w world, le string, owners map[string]string) int {
 						"warehouse_id": w.whs["BJ-01"], "tax_rate": "0.13"}}
 				}
 			}
+		}
+		if refusal == "over_limit" { // 10,000 hours of a service: over 20,000 in any currency, and no stock to refuse first
+			sv := services[n%len(services)]
+			body["lines"] = []map[string]any{{"product_id": sv.id, "quantity": "10000", "unit": sv.unit, "tax_rate": "0.06"}}
 		}
 		o := post("/api/sales/orders", key("order", n), body)
 		made++
