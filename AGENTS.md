@@ -23,6 +23,7 @@
 | `sales/lists.go` | 报价、订单、交货的列表 |
 | `sales/records.go` | 记录的类型、读取的 SQL、`emitOrder` |
 | `sales/migrations/` | 表 |
+| `cmd/seed/` | 种子：角色与三个销售账号的范围、价格表、各种状态的报价与订单（含确认被拒的反例）、交货（`make seed`） |
 | `contract/` | 本组件发布的契约，单独的模块：`contract/proto/`、`contract/events/`、`contract/openapi.yaml` |
 | `docs/` | 设计与细则 |
 
