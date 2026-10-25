@@ -4,31 +4,7 @@
 
 ## 步骤
 
-```mermaid
-sequenceDiagram
-    participant U as 用户
-    participant S as erp/sales
-    participant M as 主数据（org、partner、product、currency）
-    participant I as erp/inventory
-    participant C as erp/credit
-    U->>S: 提交确认（Idempotency-Key）
-    S->>S: 幂等认领；同键已有过程则返回它
-    S->>M: 取证（事务外）：法人、客户与产品的资格、汇率
-    S->>S: 事务 T1：再读订单（draft、版本相同），写汇率快照，建过程 reserving，订单 confirming
-    par
-        S->>I: 预占（分支 bi，实物明细按产品 + 仓库合并）
-    and
-        S->>C: 预占（分支 bc，含税合计）
-    end
-    S->>S: 事务：记录这一轮的应答，按协议 04 推进
-    par
-        S->>I: 确认 bi
-    and
-        S->>C: 确认 bc
-    end
-    S->>S: 事务 T2：过程 confirmed，订单 confirmed，审计与发件表
-    S-->>U: 已确认 / 未确认（原因）/ 处理中（过程身份）
-```
+顺序：用户提交确认（`Idempotency-Key`）→ 幂等认领，同键已有过程就返回它 → 事务外向主数据（`mdm/org`、`mdm/partner`、`mdm/product`、`mdm/currency`）取证：法人、客户与产品的资格、汇率 → 事务 T1：再读订单（`draft`、版本相同），写汇率快照，建过程 `reserving`，订单 `confirming` → 并行预占：向 `erp/inventory` 预占分支 bi（实物明细按产品 + 仓库合并），向 `erp/credit` 预占分支 bc（含税合计）；一个事务记下这一轮的应答，按协议 04 推进 → 并行确认 bi 与 bc → 事务 T2：过程 `confirmed`，订单 `confirmed`，审计与发件表 → 回答“已确认”“未确认（原因）”或“处理中（过程身份）”。
 
 | 步骤 | 做什么 | 失败时 |
 | --- | --- | --- |

@@ -4,17 +4,7 @@
 
 ## 交货
 
-```mermaid
-sequenceDiagram
-    participant U as 用户
-    participant S as erp/sales
-    participant I as erp/inventory
-    U->>S: 发起交货（订单行、数量、批次或序列号；Idempotency-Key）
-    S->>S: 事务 T1：锁订单；检查数量；建交货 issuing（交货身份即消耗身份）
-    S->>I: 出库（分支身份、消耗身份、明细）
-    I-->>S: 已出库 / 拒绝 / 未知
-    S->>S: 事务 T2：交货 posted；已交货数量、可出账台账增加；发件表
-```
+顺序：用户发起交货（订单行、数量、批次或序列号；`Idempotency-Key`）→ 事务 T1：锁订单，检查数量，建交货 `issuing`（交货身份就是消耗身份）→ 向 `erp/inventory` 出库（分支身份、消耗身份、明细），回答已出库、拒绝或未知 → 事务 T2：交货 `posted`，已交货数量与可出账台账增加，写发件表。
 
 | 步骤 | 规则 |
 | --- | --- |
