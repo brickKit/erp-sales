@@ -4,19 +4,19 @@ kind: Component
 metadata:
   id: erp/sales
   name: Sales
-  version: 3.0.14
+  version: 3.0.15
   description: "Quotations, sales orders with goods and service lines, price lists; the order's confirmation as protocol 04's coordinator over the stock and credit reservations, deliveries through the inventory, and the billable ledger erp/billing claims from (protocol 05)"
   repository: https://github.com/brickKit/erp-sales
 
 dependencies:
   components:
-    - mdm/currency@3.0.10
-    - mdm/org@3.0.9
-    - mdm/partner@3.0.12
-    - mdm/product@3.0.12
-    - id: erp/credit@3.0.8
+    - mdm/currency@3.0.11
+    - mdm/org@3.0.10
+    - mdm/partner@3.0.13
+    - mdm/product@3.0.13
+    - id: erp/credit@3.0.9
       optional: true
-    - id: erp/inventory@3.0.9
+    - id: erp/inventory@3.0.10
       optional: true
 
 events:
