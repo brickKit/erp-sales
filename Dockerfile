@@ -8,7 +8,5 @@ RUN CGO_ENABLED=0 go build -trimpath -o /erp-sales .
 
 FROM alpine:3.24.2
 COPY --from=build /erp-sales /erp-sales
-# the listening port in a container; BrickKit injects PORT only for mode: local
-ENV PORT=8084
 EXPOSE 8084 9094
 ENTRYPOINT ["/erp-sales"]
