@@ -128,9 +128,12 @@ func (m *Module) Services(s *grpcx.Services) error {
 	return nil
 }
 
-// Subscriptions declares the department projection's input (protocol 02).
+// Subscriptions declares the department projection's input (protocol 02). The subscription took every department
+// event under a new name in 3.0.16: an existing durable subscription keeps its settings (protocol P6.18), so the old
+// name would have kept the old type filter, and a version still running during an upgrade keeps its own.
 func (m *Module) Subscriptions(s *events.Subscriptions) error {
-	s.Add(events.Sub{Name: "org-units", Streams: []string{OrgStream}, Types: []string{OrgUnitChanged}, Handle: m.onOrgUnit})
+	s.Add(events.Sub{Name: "org-unit-events", Streams: []string{OrgStream}, Types: []string{OrgUnitEvents},
+		Handle: m.onOrgUnit})
 	return nil
 }
 
@@ -145,6 +148,8 @@ func (m *Module) Jobs(j *work.Jobs) error {
 		MaxAttempts: work.Unlimited, Handle: m.expireClaims})
 	j.Add(work.Job{Name: "align-org-units", Kind: work.Singleton, Effect: work.Local, Interval: time.Hour,
 		MaxAttempts: work.Unlimited, Handle: m.alignOrgUnits})
+	j.Add(work.Job{Name: jobRepairOrgUnits, Kind: work.Queue, Effect: work.IdempotentExternal,
+		MaxAttempts: work.Unlimited, Handle: m.repairOrgUnits})
 	return nil
 }
 

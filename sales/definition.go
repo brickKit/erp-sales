@@ -16,7 +16,7 @@ import (
 // Identity.
 const (
 	ID       = "erp/sales"
-	Version  = "3.0.15"
+	Version  = "3.0.16"
 	GRPCPort = 9094
 )
 
@@ -46,6 +46,7 @@ const (
 	// the source stream of the department projection
 	OrgStream       = "mdm.org"
 	OrgUnitChanged  = "mdm.org_unit.changed.v1"
+	OrgUnitEvents   = "mdm.org_unit.>" // every department event, later actions and majors too (protocol P6.33)
 	OrgUnitsProject = "org_units"
 )
 

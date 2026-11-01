@@ -15,7 +15,7 @@
 ## 部署前准备
 
 - 数据库：PostgreSQL 16 及以上；schema `erp_sales`，属主角色 `erp_sales_owner`（只供迁移）与运行角色 `erp_sales_rw`（只有读写数据的权限），名字来自装配项目的注册表。三者由部署方在第一次启动前建好；表由本组件的迁移建，迁移里不建角色、不授权。
-- 消息系统（`BUS_URL`）与实现实例（`IMPLEMENTATION_INSTANCE`）：报价、订单、交货、价格表与价格以完整状态事件，确认结束、交货已过账、可出账台账变化以增量事实发布到流 `erp.sales`（4 个分区）；订阅 `mdm/org` 的流 `mdm.org` 里的部门事件。
+- 消息系统（`BUS_URL`）与实现实例（`IMPLEMENTATION_INSTANCE`）：报价、订单、交货、价格表与价格以完整状态事件，确认结束、交货已过账、可出账台账变化以增量事实发布到流 `erp.sales`（4 个分区）；订阅 `mdm/org` 的流 `mdm.org` 里的部门事件（全部动作，`mdm.org_unit.>`）。
 - 部署的服务证书（`SERVICE_TLS_*`）；身份与授权（`IAM_*`、`AUTHZ_GRPC_URL`、`DEPLOYMENT_ID`）；审计（`AUDIT_GRPC_URL`）。
 - 依赖 `mdm/org`、`mdm/partner`、`mdm/product`、`mdm/currency`，经它们的系统面读取；库存与信用是可选的参与方。
 - 授权：系统面的出账来源只给 `erp/billing` 的服务身份；订单的系统读取给任一组件。
@@ -46,7 +46,7 @@
   - `be.erp.sales.v3.BillingSourceService/Ledger`、`Claim`、`Renew`、`Confirm`、`Formalize`、`Release`（`Reverse` 本版不支持）：只对 `erp/billing` 开放，操作 `erp.sales.system.billing`；按认领身份幂等。
   - `be.erp.sales.v3.OrderService/Read`：任一组件，操作 `erp.sales.system.read`；数据是订单事件的载荷。
 - **用户面**：`contract/openapi.yaml`。操作 `erp.sales.quotation.read`、`erp.sales.quotation.edit`、`erp.sales.order.read`、`erp.sales.order.edit`、`erp.sales.order.confirm`、`erp.sales.order.cancel`、`erp.sales.delivery.read`、`erp.sales.delivery.create`、`erp.sales.price_list.read`、`erp.sales.price_list.manage`（`erp.sales.return.read`、`erp.sales.return.edit` 本版不支持）；报价、订单与交货带法人、部门、负责人三个维度（“销售只看自己的订单”“经理看本部门及下级”），价格表带法人维度。新建、确认、取消、交货要带 `Idempotency-Key`。
-- **事件**（流 `erp.sales`，schema 在 `contract/events/`）：`erp.quotation.changed.v1`、`erp.sales_order.changed.v1`、`erp.delivery.changed.v1`、`erp.price_list.changed.v1`、`erp.price_list_item.changed.v1`（完整状态），`erp.sales_order.confirmation_ended.v1`、`erp.delivery.posted.v1`、`erp.billable.changed.v1`（增量事实，按 `fact_id` 去重）。订阅 `mdm.org_unit.changed.v1`。
+- **事件**（流 `erp.sales`，schema 在 `contract/events/`）：`erp.quotation.changed.v1`、`erp.sales_order.changed.v1`、`erp.delivery.changed.v1`、`erp.price_list.changed.v1`、`erp.price_list_item.changed.v1`（完整状态），`erp.sales_order.confirmation_ended.v1`、`erp.delivery.posted.v1`、`erp.billable.changed.v1`（增量事实，按 `fact_id` 去重）。订阅 `mdm/org` 部门的全部事件（`mdm.org_unit.>`；认识的是 `mdm.org_unit.changed.v1`，别的标为不完整再取回）。
 
 ## 外壳声明
 

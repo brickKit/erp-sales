@@ -29,12 +29,24 @@ func repath(ctx context.Context, tx db.Tx, id, path string) error {
 	return nil
 }
 
+const jobRepairOrgUnits = "repair-org-units"
+
 // onOrgUnit receives a department's event: the projection's state table decides, and a changed row rewrites the
-// documents' copies in the same transaction.
+// documents' copies in the same transaction. An action this version does not know (a later mdm/org's) changes the
+// department somehow, but its payload's shape is not known: the row is marked incomplete without taking anything from
+// it, and a repair fetches the department (protocol P6.33, protocol 02 PJ36).
 func (m *Module) onOrgUnit(ctx context.Context, tx db.Tx, e events.Received) error {
-	out, err := orgUnits.Apply(ctx, tx, projection.Input{RecordID: e.RecordID, Kind: string(e.Projection),
-		Version: e.Version, Impl: e.Impl, Epoch: e.Epoch, Data: e.Data})
+	in := projection.Input{RecordID: e.RecordID, Kind: string(e.Projection), Version: e.Version, Impl: e.Impl,
+		Epoch: e.Epoch, Data: e.Data}
+	if e.Type != OrgUnitChanged {
+		in.Kind, in.Data = projection.Partial, json.RawMessage(`{}`)
+	}
+	out, err := orgUnits.Apply(ctx, tx, in)
 	if err != nil || !out.Changed {
+		return err
+	}
+	if out.Fetch {
+		_, err := m.rt.Work.Enqueue(ctx, tx, jobRepairOrgUnits, struct{}{})
 		return err
 	}
 	var u orgUnit
@@ -144,12 +156,17 @@ func (s orgSource) Identity(ctx context.Context) (string, string, error) {
 
 // alignOrgUnits re-fetches every department (P9.12), repairs rows waiting for a fetch, then rewrites the documents
 // whose copied path differs from the projection: the safety net under the events.
-func (m *Module) alignOrgUnits(ctx context.Context, _ *work.Run) error {
-	src := orgSource{m}
-	if err := orgUnits.Align(ctx, m.rt.DB, src); err != nil {
+func (m *Module) alignOrgUnits(ctx context.Context, r *work.Run) error {
+	if err := orgUnits.Align(ctx, m.rt.DB, orgSource{m}); err != nil {
 		return err
 	}
-	if _, err := orgUnits.Repair(ctx, m.rt.DB, src); err != nil {
+	return m.repairOrgUnits(ctx, r)
+}
+
+// repairOrgUnits fetches the departments waiting for a fetch, then rewrites the documents whose copied path differs
+// from the projection.
+func (m *Module) repairOrgUnits(ctx context.Context, _ *work.Run) error {
+	if _, err := orgUnits.Repair(ctx, m.rt.DB, orgSource{m}); err != nil {
 		return err
 	}
 	return m.rt.DB.BackgroundTx(ctx, func(ctx context.Context, tx db.Tx) error {

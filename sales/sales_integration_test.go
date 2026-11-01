@@ -326,10 +326,14 @@ func (fx *fixture) get(path string) map[string]any {
 // publishOrgUnit publishes mdm.org_unit.changed.v1 as mdm/org's forwarder would.
 func (fx *fixture) publishOrgUnit(unit map[string]any) {
 	data, _ := json.Marshal(unit)
-	id := unit["id"].(string)
+	fx.publishOrg(OrgUnitChanged, unit["id"].(string), unit["version"].(int64), events.Full, data)
+}
+
+// publishOrg publishes any event on mdm/org's stream, as a later mdm/org with more event types would.
+func (fx *fixture) publishOrg(typ, id string, version int64, kind events.Projection, data []byte) {
 	row := events.Row{EventID: ids.New().String(), Stream: orgStream.Name, Partition: orgStream.PartitionOf(id),
-		Type: OrgUnitChanged, OccurredAt: time.Now(), RecordID: id, Version: unit["version"].(int64),
-		Projection: events.Full, Payload: data, Seq: time.Now().UnixNano(), Epoch: events.Epoch{Generation: 1, Timeline: 1}}
+		Type: typ, OccurredAt: time.Now(), RecordID: id, Version: version,
+		Projection: kind, Payload: data, Seq: time.Now().UnixNano(), Epoch: events.Epoch{Generation: 1, Timeline: 1}}
 	row.Digest = events.Digest(row.EventID, data)
 	require.NoError(fx.t, fx.tr.Publish(fx.ctx, events.Message{Subject: events.Subject(orgStream.Name, row.Partition, row.Type),
 		Headers: row.Headers(Org, orgStamp.GetInstance()), Data: data}))

@@ -9,7 +9,7 @@
 | `sales/definition.go` | 组件定义：身份、依赖（库存与信用可选）、流与事件类型、资源与操作、三个维度、参数（同步预算、W、认领期限） |
 | `sales/module.go` | 路由与系统面的注册、本组件的错误原因、订阅与后台工作的声明、`check`、`decimal`、审计与事件的写法 |
 | `sales/upstream.go` | 事务外的取证：法人、部门、客户、产品的资格与快照、换算（`convert`）、即期汇率、币种小数位 |
-| `sales/orgunits.go` | 部门投影（`org_units`）：订阅、按需补取、每小时对齐；部门路径复制到单据上并随事件改写（`repath`） |
+| `sales/orgunits.go` | 部门投影（`org_units`）：按聚合订阅（不认识的动作标为不完整，修复工作项取回）、按需补取、每小时对齐；部门路径复制到单据上并随事件改写（`repath`） |
 | `sales/pricing.go` | 价格表与价格；`priceOf`（销售单位的价，否则基本单位的价乘系数） |
 | `sales/lines.go` | 报价与订单的行：输入的检查、取证、取价与金额（`buildLines`）、整份替换（`writeLines`） |
 | `sales/documents.go` | 报价与订单共用的部分：表头的取证与授权（`prepare`、`patchHead`）、部门（`departmentOf`）、单号（`number`）、读取 |
