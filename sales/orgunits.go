@@ -3,6 +3,7 @@ package sales
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/brickKit/be-sdk-go/v3/calls"
 	"github.com/brickKit/be-sdk-go/v3/db"
@@ -96,35 +97,48 @@ func (s orgSource) client() (orgv3.SourceServiceClient, error) {
 	return orgv3.NewSourceServiceClient(c), nil
 }
 
-func (s orgSource) Snapshot(ctx context.Context, cursor string) ([]projection.Record, string, error) {
+// identityOf is who answered (P9.18): mdm/org's stamp. Its source methods answer from its primary only (they have
+// no replica answer), so the stamp declares the primary.
+func identityOf(st *orgv3.Stamp) projection.Identity {
+	return projection.Identity{Deployment: st.GetDeployment(), Impl: st.GetInstance(), Epoch: st.GetEpoch(), Primary: true}
+}
+
+func (s orgSource) Snapshot(ctx context.Context, cursor string) ([]projection.Record, string, projection.Identity, error) {
 	c, err := s.client()
 	if err != nil {
-		return nil, "", err
+		return nil, "", projection.Identity{}, err
 	}
 	res, err := c.Snapshot(ctx, &orgv3.SnapshotRequest{Aggregate: orgv3.Aggregate_AGGREGATE_ORG_UNIT, Cursor: cursor},
 		calls.Idempotent())
 	if err != nil {
-		return nil, "", err
+		return nil, "", projection.Identity{}, err
 	}
 	var out []projection.Record
 	for _, r := range res.GetRecords() {
 		out = append(out, projection.Record{ID: r.GetId(), Version: r.GetVersion(), Data: r.GetData()})
 	}
-	return out, res.GetNextCursor(), nil
+	return out, res.GetNextCursor(), identityOf(res.GetStamp()), nil
 }
 
-func (s orgSource) Read(ctx context.Context, ids []string) ([]projection.ReadResult, error) {
+// Read reads in batches of MaxReadIDs; every batch must come from the same source, or the answer is not one.
+func (s orgSource) Read(ctx context.Context, ids []string) ([]projection.ReadResult, projection.Identity, error) {
+	var from projection.Identity
 	c, err := s.client()
 	if err != nil {
-		return nil, err
+		return nil, from, err
 	}
 	var out []projection.ReadResult
-	for len(ids) > 0 {
+	for first := true; len(ids) > 0; first = false {
 		n := min(len(ids), MaxReadIDs)
 		res, err := c.Read(ctx, &orgv3.ReadRequest{Aggregate: orgv3.Aggregate_AGGREGATE_ORG_UNIT, Ids: ids[:n]},
 			calls.Idempotent())
 		if err != nil {
-			return nil, err
+			return nil, from, err
+		}
+		if id := identityOf(res.GetStamp()); first {
+			from = id
+		} else if id != from {
+			return nil, from, fmt.Errorf("%w: one read answered by %+v and by %+v", projection.ErrOtherSource, from, id)
 		}
 		for _, r := range res.GetResults() {
 			st := projection.Purged
@@ -138,20 +152,7 @@ func (s orgSource) Read(ctx context.Context, ids []string) ([]projection.ReadRes
 		}
 		ids = ids[n:]
 	}
-	return out, nil
-}
-
-func (s orgSource) Identity(ctx context.Context) (string, string, error) {
-	c, err := s.client()
-	if err != nil {
-		return "", "", err
-	}
-	res, err := c.Snapshot(ctx, &orgv3.SnapshotRequest{Aggregate: orgv3.Aggregate_AGGREGATE_ORG_UNIT, Limit: 1},
-		calls.Idempotent())
-	if err != nil {
-		return "", "", err
-	}
-	return res.GetStamp().GetInstance(), res.GetStamp().GetEpoch(), nil
+	return out, from, nil
 }
 
 // alignOrgUnits re-fetches every department (P9.12), repairs rows waiting for a fetch, then rewrites the documents
