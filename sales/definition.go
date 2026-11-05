@@ -16,7 +16,7 @@ import (
 // Identity.
 const (
 	ID       = "erp/sales"
-	Version  = "3.0.23"
+	Version  = "3.0.24"
 	GRPCPort = 9094
 )
 
@@ -70,8 +70,11 @@ const (
 	OpReturnRead     = "erp.sales.return.read"
 	OpReturnEdit     = "erp.sales.return.edit"
 	System           = "erp.sales.system"
-	OpSysRead        = "erp.sales.system.read"
-	OpSysBilling     = "erp.sales.system.billing"
+	// OpResend is the redelivery of this component's stream (be-protocol P6.38: every component with streams serves
+	// it; any component of the deployment may call it).
+	OpResend     = "erp.sales.system.resend"
+	OpSysRead    = "erp.sales.system.read"
+	OpSysBilling = "erp.sales.system.billing"
 )
 
 // Dimensions (security 07): the legal entity, the department (an org-tree path) and the owner.
@@ -160,12 +163,13 @@ func Definitions() *sdkauthz.Definitions {
 			low(OpReturnEdit, Returns, "manage", true),
 			low(OpSysRead, System, "read", false),
 			{Key: OpSysBilling, ResourceType: System, Purpose: "action", RiskClass: "low", SideEffects: []string{"business_write"}},
+			{Key: OpResend, ResourceType: System, Purpose: "read", RiskClass: "low"},
 		}}
 }
 
 // Definition is the component as the launcher and the shells take it.
 func Definition() component.Definition {
 	return component.Definition{ID: ID, Version: Version, Migrations: migrations(), GRPCPort: GRPCPort, Subscribes: true,
-		Streams: []events.Stream{{Name: Stream, Partitions: 4}}, Authz: Definitions(),
+		Streams: []events.Stream{{Name: Stream, Partitions: 4}}, Authz: Definitions(), Resend: OpResend,
 		New: func(rt *runtime.Runtime) (component.Module, error) { return New(rt) }}
 }
