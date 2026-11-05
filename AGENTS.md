@@ -7,6 +7,7 @@
 | 位置 | 内容 |
 | --- | --- |
 | `sales/definition.go` | 组件定义：身份、依赖（库存与信用可选）、流与事件类型、资源与操作、三个维度、参数（同步预算、W、认领期限） |
+| `sales/checks.go` | 整套恢复的核对（线协议第 14 章，SDK 的 `CheckService`，只许恢复工具调用）：本组件审计过的对象按版本答“还在不在”（`Presence`）；协议 04 的检查登记在这里，写在 `recoverycheck.go`（`erp.sales.reservations`） |
 | `sales/module.go` | 路由与系统面的注册、本组件的错误原因、订阅与后台工作的声明、`check`、`decimal`、审计与事件的写法 |
 | `sales/upstream.go` | 事务外的取证：法人、部门、客户、产品的资格与快照、换算（`convert`）、即期汇率、币种小数位 |
 | `sales/orgunits.go` | 部门投影（`org_units`）：按聚合订阅（不认识的动作标为不完整，修复工作项取回）、按需补取、每小时对齐，组织换了纪元（整套恢复之后）时立即排一次对齐（`org_realign` 去重）；部门路径复制到单据上并随事件改写（`repath`） |
