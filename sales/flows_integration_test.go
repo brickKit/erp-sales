@@ -377,6 +377,19 @@ func (fx *fixture) departments() {
 	require.Eventually(t, func() bool { return seen()[inD2] }, 30*time.Second, 200*time.Millisecond,
 		"the department's move rewrites the copied path")
 	fx.laterOrgEvents(moved)
+
+	// mdm/org went through a full recovery (protocol 15): its epoch advanced and its department went back to an
+	// earlier version, now outside department 1. Its events of the new epoch are not applied before the projection
+	// aligns to it (protocol 02, be-sdk-go's NewerEpoch): the projection aligns at once, not at the hourly alignment,
+	// and the copied path follows
+	back := fx.unit(fx.d2, fx.le+"/"+fx.d2, 2)
+	fx.org.mu.Lock()
+	orgStamp.Epoch = "2.1"
+	fx.org.units[fx.d2] = back
+	fx.org.mu.Unlock()
+	fx.publishOrgUnit(back)
+	require.Eventually(t, func() bool { return !seen()[inD2] }, 30*time.Second, 200*time.Millisecond,
+		"after the source's recovery the projection aligns to its new epoch and the order leaves Bob's tree")
 }
 
 // laterOrgEvents: mdm/org later publishes an action this version does not know and keeps publishing its legal

@@ -34,6 +34,7 @@ import (
 	"github.com/brickKit/be-sdk-go/v3/config"
 	"github.com/brickKit/be-sdk-go/v3/events"
 	"github.com/brickKit/be-sdk-go/v3/events/bus"
+	"github.com/brickKit/be-sdk-go/v3/events/jetstream"
 	"github.com/brickKit/be-sdk-go/v3/ids"
 	"github.com/brickKit/be-sdk-go/v3/launcher"
 	"github.com/brickKit/be-sdk-go/v3/sectest"
@@ -146,6 +147,15 @@ func start(t *testing.T) *fixture {
 	})
 	serve(t, itCredit, w, Credit, func(s *grpc.Server) { creditv3.RegisterReservationServiceServer(s, fx.cred) })
 
+	// the shared NATS keeps what earlier runs, cells and recovery drills left on these streams (other implementation
+	// instances, a newer epoch): the projection would judge them and skip this run's events (the T8e drill left mdm.org
+	// at epoch 2.1). A clean stream each run.
+	js, err := jetstream.Connect(natsURL, "sales-it-clean")
+	require.NoError(t, err)
+	for _, s := range []string{orgStream.Name, Stream} {
+		_ = js.DeleteStream(ctx, s) // not there: nothing to clean
+	}
+	_ = js.Close()
 	// mdm/org's stream exists before the subscription starts (mdm/org's own forwarder makes it in a deployment)
 	fx.tr, err = bus.Open(ctx, natsURL, "sales-it-org", slog.Default())
 	require.NoError(t, err)
@@ -323,6 +333,15 @@ func (fx *fixture) get(path string) map[string]any {
 	return out
 }
 
+// orgEpoch is the stand-in mdm/org's epoch as its stamp says it (a full recovery advances it).
+func (fx *fixture) orgEpoch() events.Epoch {
+	fx.org.mu.Lock()
+	defer fx.org.mu.Unlock()
+	e, err := events.ParseEpoch(orgStamp.GetEpoch())
+	require.NoError(fx.t, err)
+	return e
+}
+
 // publishOrgUnit publishes mdm.org_unit.changed.v1 as mdm/org's forwarder would.
 func (fx *fixture) publishOrgUnit(unit map[string]any) {
 	data, _ := json.Marshal(unit)
@@ -333,7 +352,7 @@ func (fx *fixture) publishOrgUnit(unit map[string]any) {
 func (fx *fixture) publishOrg(typ, id string, version int64, kind events.Projection, data []byte) {
 	row := events.Row{EventID: ids.New().String(), Stream: orgStream.Name, Partition: orgStream.PartitionOf(id),
 		Type: typ, OccurredAt: time.Now(), RecordID: id, Version: version,
-		Projection: kind, Payload: data, Seq: time.Now().UnixNano(), Epoch: events.Epoch{Generation: 1, Timeline: 1}}
+		Projection: kind, Payload: data, Seq: time.Now().UnixNano(), Epoch: fx.orgEpoch()}
 	row.Digest = events.Digest(row.EventID, data)
 	require.NoError(fx.t, fx.tr.Publish(fx.ctx, events.Message{Subject: events.Subject(orgStream.Name, row.Partition, row.Type),
 		Headers: row.Headers(Org, orgStamp.GetInstance()), Data: data}))

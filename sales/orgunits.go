@@ -32,6 +32,10 @@ func repath(ctx context.Context, tx db.Tx, id, path string) error {
 
 const jobRepairOrgUnits = "repair-org-units"
 
+// jobRealignOrgUnits aligns the department projection now, not at the hourly alignment: mdm/org's events of a newer
+// epoch (it went through a full recovery, protocol 15) wait for it (protocol 02; be-sdk-go's NewerEpoch).
+const jobRealignOrgUnits = "realign-org-units"
+
 // onOrgUnit receives a department's event: the projection's state table decides, and a changed row rewrites the
 // documents' copies in the same transaction. An action this version does not know (a later mdm/org's) changes the
 // department somehow, but its payload's shape is not known: the row is marked incomplete without taking anything from
@@ -43,6 +47,9 @@ func (m *Module) onOrgUnit(ctx context.Context, tx db.Tx, e events.Received) err
 		in.Kind, in.Data = projection.Partial, json.RawMessage(`{}`)
 	}
 	out, err := orgUnits.Apply(ctx, tx, in)
+	if err == nil && out.Skipped == projection.NewerEpoch {
+		return m.realignSoon(ctx, tx)
+	}
 	if err != nil || !out.Changed {
 		return err
 	}
@@ -157,6 +164,29 @@ func (s orgSource) Read(ctx context.Context, ids []string) ([]projection.ReadRes
 
 // alignOrgUnits re-fetches every department (P9.12), repairs rows waiting for a fetch, then rewrites the documents
 // whose copied path differs from the projection: the safety net under the events.
+// realignSoon queues one alignment of the projection (one at a time: the row in org_realign), in the event's
+// transaction; the alignment takes the source's current state, the skipped event's change with it.
+func (m *Module) realignSoon(ctx context.Context, tx db.Tx) error {
+	tag, err := tx.Exec(ctx, "INSERT INTO org_realign DEFAULT VALUES ON CONFLICT DO NOTHING")
+	if err != nil || tag.RowsAffected() == 0 {
+		return err
+	}
+	_, err = m.rt.Work.Enqueue(ctx, tx, jobRealignOrgUnits, struct{}{})
+	return err
+}
+
+// realignOrgUnits is the queued alignment: the row goes first, so an event of the new epoch arriving meanwhile queues
+// another one.
+func (m *Module) realignOrgUnits(ctx context.Context, r *work.Run) error {
+	if err := m.rt.DB.BackgroundTx(ctx, func(ctx context.Context, tx db.Tx) error {
+		_, err := tx.Exec(ctx, "DELETE FROM org_realign")
+		return err
+	}); err != nil {
+		return err
+	}
+	return m.alignOrgUnits(ctx, r)
+}
+
 func (m *Module) alignOrgUnits(ctx context.Context, r *work.Run) error {
 	if err := orgUnits.Align(ctx, m.rt.DB, orgSource{m}); err != nil {
 		return err

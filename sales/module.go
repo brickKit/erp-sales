@@ -150,6 +150,8 @@ func (m *Module) Jobs(j *work.Jobs) error {
 		MaxAttempts: work.Unlimited, Handle: m.alignOrgUnits})
 	j.Add(work.Job{Name: jobRepairOrgUnits, Kind: work.Queue, Effect: work.IdempotentExternal,
 		MaxAttempts: work.Unlimited, Handle: m.repairOrgUnits})
+	j.Add(work.Job{Name: jobRealignOrgUnits, Kind: work.Queue, Effect: work.IdempotentExternal,
+		MaxAttempts: work.Unlimited, Handle: m.realignOrgUnits})
 	return nil
 }
 
