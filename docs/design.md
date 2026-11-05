@@ -131,6 +131,8 @@
 
 ## 实现状态
 
+3.0.27（底层先行第 4 项 T10 的级联）：be-sdk-go alpha.92。整套恢复的核对（`CheckService`，操作 `erp.sales.system.recover`，只许恢复工具调用）：SDK 自带的三项检查；报价、订单、交货、价格表按版本答“还在不在”；业务变更的审计 `target` 带变更之后的版本（`audit.TargetOf`）。协议 04 的检查 `erp.sales.reservations`（本组件是协调者，替两边报告，`recoverycheck.go`）：恢复点上还在进行的确认、取消、释放过程与出库中的交货列为差异（开放后由恢复工作项推进）；每个订单最近一个已结束的过程：已确认（订单仍是已确认）的分支在参与方应为已提交或已消耗，已拒绝、已取消（最近 30 天内结束的）的分支不应还占着；读本库在回滚的事务里，问参与方（`Query`，与过程推进共用 `queryBranch`）在事务之外；问不到答“无法证明”。清单的 `RECOVERY_PHASE` 加 `verifying`、`read_only`；依赖换到 T10 的新版本。
+
 3.0.26（底层先行第 4 项 T9 的级联）：be-sdk-go alpha.87（重放、恢复阶段 `replaying`、转发器停止时放弃租约）；清单的 `RECOVERY_PHASE` 加 `replaying`。依赖：erp/credit@3.0.17 → erp/credit@3.0.18 erp/inventory@3.0.17 → erp/inventory@3.0.18 mdm/currency@3.0.17 → mdm/currency@3.0.18 mdm/org@3.0.17 → mdm/org@3.0.19 mdm/partner@3.0.21 → mdm/partner@3.0.22 mdm/product@3.0.20 → mdm/product@3.0.21。
 
 3.0.25（底层先行第 4 项 T8e 的演练发现）：组织整套恢复后纪元变大，它的部门事件在投影对齐到新纪元之前不应用（SDK 的 `NewerEpoch`）；原来只有每小时一次的对齐，恢复后部门的变化最长一小时才到单据。现在事件处理时遇到新纪元就排一次对齐（迁移 0002 的 `org_realign` 一行去重，作业 `realign-org-units`）。集成测试开始时删掉它用到的两条流：共用 NATS 上别的运行、格与演练留下的事件（别的实现实例、更新的纪元）会让投影跳过本次的事件。

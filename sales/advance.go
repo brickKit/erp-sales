@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -154,13 +155,12 @@ func (m *Module) send(ctx context.Context, p process, b branch, cmd string, h *h
 			br = res.GetBranch()
 		}
 		if err != nil {
-			var res *inventoryv3.QueryResponse
-			if res, err = c.Query(ctx, &inventoryv3.QueryRequest{BranchId: b.BranchID}, calls.Idempotent()); err != nil {
+			if state, reason, err = m.queryBranch(ctx, b.Component, b.BranchID); err != nil {
 				return a
 			}
-			br = res.GetBranch()
+		} else {
+			state, reason = branchState(br.GetState().String()), br.GetReason()
 		}
-		state, reason = br.GetState().String(), br.GetReason()
 	case Credit:
 		c := creditv3.NewReservationServiceClient(conn)
 		var br *creditv3.Branch
@@ -182,17 +182,15 @@ func (m *Module) send(ctx context.Context, p process, b branch, cmd string, h *h
 			br = res.GetBranch()
 		}
 		if err != nil {
-			var res *creditv3.QueryResponse
-			if res, err = c.Query(ctx, &creditv3.QueryRequest{BranchId: b.BranchID}, calls.Idempotent()); err != nil {
+			if state, reason, err = m.queryBranch(ctx, b.Component, b.BranchID); err != nil {
 				return a
 			}
-			br = res.GetBranch()
+		} else {
+			state, reason = branchState(br.GetState().String()), br.GetReason()
 		}
-		state, reason = br.GetState().String(), br.GetReason()
 	default:
 		return a
 	}
-	state = strings.ToLower(strings.TrimPrefix(state, "BRANCH_STATE_"))
 	if state == "absent" || state == "unspecified" {
 		return a // the command never arrived: the next round sends it again
 	}
@@ -201,6 +199,35 @@ func (m *Module) send(ctx context.Context, p process, b branch, cmd string, h *h
 		a.reason = &reason
 	}
 	return a
+}
+
+// branchState is a participant's branch state as this component writes it: the enum's name, lower case, unprefixed.
+func branchState(enum string) string {
+	return strings.ToLower(strings.TrimPrefix(enum, "BRANCH_STATE_"))
+}
+
+// queryBranch asks a participant for a branch by its ID (protocol 04's query): its state ("absent" when the participant
+// never saw it) and reason. An error is "not known".
+func (m *Module) queryBranch(ctx context.Context, component, branchID string) (string, string, error) {
+	conn, ok := m.rt.GRPC(component)
+	if !ok {
+		return "", "", fmt.Errorf("%s is not in this deployment", component)
+	}
+	switch component {
+	case Inventory:
+		res, err := inventoryv3.NewReservationServiceClient(conn).Query(ctx, &inventoryv3.QueryRequest{BranchId: branchID}, calls.Idempotent())
+		if err != nil {
+			return "", "", err
+		}
+		return branchState(res.GetBranch().GetState().String()), res.GetBranch().GetReason(), nil
+	case Credit:
+		res, err := creditv3.NewReservationServiceClient(conn).Query(ctx, &creditv3.QueryRequest{BranchId: branchID}, calls.Idempotent())
+		if err != nil {
+			return "", "", err
+		}
+		return branchState(res.GetBranch().GetState().String()), res.GetBranch().GetReason(), nil
+	}
+	return "", "", fmt.Errorf("%s is no participant", component)
 }
 
 // step records the answers (a branch's state only moves forward) and decides the process's next state; it reports

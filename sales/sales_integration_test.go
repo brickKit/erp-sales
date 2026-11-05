@@ -91,6 +91,7 @@ func TestSalesEndToEnd(t *testing.T) {
 	fx.lists()
 	fx.departments()
 	fx.outbox()
+	fx.recoveryChecks()
 }
 
 // start makes the world, the stand-ins and mdm/org's stream, then migrates and runs the member.

@@ -16,7 +16,7 @@ import (
 // Identity.
 const (
 	ID       = "erp/sales"
-	Version  = "3.0.26"
+	Version  = "3.0.27"
 	GRPCPort = 9094
 )
 
@@ -72,7 +72,9 @@ const (
 	System           = "erp.sales.system"
 	// OpResend is the redelivery of this component's stream (be-protocol P6.38: every component with streams serves
 	// it; any component of the deployment may call it).
-	OpResend     = "erp.sales.system.resend"
+	OpResend = "erp.sales.system.resend"
+	// OpRecover is a full recovery's checks (be-protocol chapter 14: the recovery tool only).
+	OpRecover    = "erp.sales.system.recover"
 	OpSysRead    = "erp.sales.system.read"
 	OpSysBilling = "erp.sales.system.billing"
 )
@@ -164,12 +166,13 @@ func Definitions() *sdkauthz.Definitions {
 			low(OpSysRead, System, "read", false),
 			{Key: OpSysBilling, ResourceType: System, Purpose: "action", RiskClass: "low", SideEffects: []string{"business_write"}},
 			{Key: OpResend, ResourceType: System, Purpose: "read", RiskClass: "low"},
+			{Key: OpRecover, ResourceType: System, Purpose: "read", RiskClass: "low"},
 		}}
 }
 
 // Definition is the component as the launcher and the shells take it.
 func Definition() component.Definition {
 	return component.Definition{ID: ID, Version: Version, Migrations: migrations(), GRPCPort: GRPCPort, Subscribes: true,
-		Streams: []events.Stream{{Name: Stream, Partitions: 4}}, Authz: Definitions(), Resend: OpResend,
+		Streams: []events.Stream{{Name: Stream, Partitions: 4}}, Authz: Definitions(), Resend: OpResend, Recovery: OpRecover,
 		New: func(rt *runtime.Runtime) (component.Module, error) { return New(rt) }}
 }

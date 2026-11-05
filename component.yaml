@@ -4,19 +4,19 @@ kind: Component
 metadata:
   id: erp/sales
   name: Sales
-  version: 3.0.26
+  version: 3.0.27
   description: "Quotations, sales orders with goods and service lines, price lists; the order's confirmation as protocol 04's coordinator over the stock and credit reservations, deliveries through the inventory, and the billable ledger erp/billing claims from (protocol 05)"
   repository: https://github.com/brickKit/erp-sales
 
 dependencies:
   components:
-    - mdm/currency@3.0.18
-    - mdm/org@3.0.19
-    - mdm/partner@3.0.22
-    - mdm/product@3.0.21
-    - id: erp/credit@3.0.18
+    - mdm/currency@3.0.19
+    - mdm/org@3.0.20
+    - mdm/partner@3.0.23
+    - mdm/product@3.0.22
+    - id: erp/credit@3.0.19
       optional: true
-    - id: erp/inventory@3.0.18
+    - id: erp/inventory@3.0.19
       optional: true
 
 events:
@@ -66,6 +66,8 @@ configSchema:
         - frozen
         - redelivering
         - replaying
+        - verifying
+        - read_only
       type: string
     AUDIT_GRPC_URL:
       description: 'process-level: the same for every member of a shell'
