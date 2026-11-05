@@ -131,6 +131,8 @@
 
 ## 实现状态
 
+3.0.26（底层先行第 4 项 T9 的级联）：be-sdk-go alpha.87（重放、恢复阶段 `replaying`、转发器停止时放弃租约）；清单的 `RECOVERY_PHASE` 加 `replaying`。依赖：erp/credit@3.0.17 → erp/credit@3.0.18 erp/inventory@3.0.17 → erp/inventory@3.0.18 mdm/currency@3.0.17 → mdm/currency@3.0.18 mdm/org@3.0.17 → mdm/org@3.0.19 mdm/partner@3.0.21 → mdm/partner@3.0.22 mdm/product@3.0.20 → mdm/product@3.0.21。
+
 3.0.25（底层先行第 4 项 T8e 的演练发现）：组织整套恢复后纪元变大，它的部门事件在投影对齐到新纪元之前不应用（SDK 的 `NewerEpoch`）；原来只有每小时一次的对齐，恢复后部门的变化最长一小时才到单据。现在事件处理时遇到新纪元就排一次对齐（迁移 0002 的 `org_realign` 一行去重，作业 `realign-org-units`）。集成测试开始时删掉它用到的两条流：共用 NATS 上别的运行、格与演练留下的事件（别的实现实例、更新的纪元）会让投影跳过本次的事件。
 
 3.0.24（底层先行第 4 项 T8 的级联）：be-sdk-go alpha.81（恢复模式、补发与消费者进度）；流的补发（`be.source.v1.ResendService`，操作 `erp.sales.system.resend`，登记在本组件的 system 资源下，部署内任何组件可调用，线协议 P6.38）；清单声明 `RECOVERY_PHASE`。
