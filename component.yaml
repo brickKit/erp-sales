@@ -4,7 +4,7 @@ kind: Component
 metadata:
   id: erp/sales
   name: Sales
-  version: 3.0.34
+  version: 3.0.35
   description: "Quotations, sales orders with goods and service lines, price lists; the order's confirmation as protocol 04's coordinator over the stock and credit reservations, deliveries through the inventory, and the billable ledger erp/billing claims from (protocol 05)"
   repository: https://github.com/brickKit/erp-sales
 
@@ -60,14 +60,7 @@ local:
 
 configSchema:
   properties:
-    RECOVERY_PHASE:
-      description: 'process-level: the same for every member of a shell'
-      enum:
-        - frozen
-        - redelivering
-        - replaying
-        - verifying
-        - read_only
+    ALERT_WEBHOOK_URL:
       type: string
     AUDIT_GRPC_URL:
       description: 'process-level: the same for every member of a shell'
@@ -158,6 +151,27 @@ configSchema:
       type: string
     PG_USER:
       type: string
+    RECOVERY_PHASE:
+      description: 'process-level: the same for every member of a shell'
+      enum:
+        - frozen
+        - redelivering
+        - replaying
+        - verifying
+        - read_only
+      type: string
+    RUN_PROFILE_ACCESS_KEY:
+      type: string
+    RUN_PROFILE_BUCKET:
+      type: string
+    RUN_PROFILE_REGION:
+      description: SDK default us-east-1
+      type: string
+    RUN_PROFILE_SECRET_KEY:
+      secret: true
+      type: string
+    RUN_PROFILE_URL:
+      type: string
     SERVICE_TLS_CA_FILE:
       description: a file path, re-read on rotation
       mount: file
@@ -178,6 +192,45 @@ configSchema:
       type: string
     STOP_TIMEOUT:
       description: a duration (e.g. 2s, 500ms); SDK default 30s
+      type: string
+    TIERING_BUCKET:
+      description: SDK default be-tiering
+      type: string
+    TIERING_COLD_CONCURRENCY:
+      description: SDK default 4
+      type: integer
+    TIERING_COLD_SYNC_LIMIT:
+      description: a duration (e.g. 2s, 500ms); SDK default 10s
+      type: string
+    TIERING_DELETE_ACCESS_KEY:
+      type: string
+    TIERING_DELETE_SECRET_KEY:
+      secret: true
+      type: string
+    TIERING_GRACE:
+      description: a duration (e.g. 2s, 500ms); SDK default 604800s
+      type: string
+    TIERING_LIST_DAYS:
+      description: SDK default 90
+      type: integer
+    TIERING_READ_ACCESS_KEY:
+      type: string
+    TIERING_READ_SECRET_KEY:
+      secret: true
+      type: string
+    TIERING_RESIDENCE_ERP_SALES_ORDERS:
+      type: string
+    TIERING_RETENTION_ERP_SALES_ORDERS:
+      type: string
+    TIERING_STORE_URL:
+      type: string
+    TIERING_WINDOW:
+      description: SDK default 0 2 * * *
+      type: string
+    TIERING_WRITE_ACCESS_KEY:
+      type: string
+    TIERING_WRITE_SECRET_KEY:
+      secret: true
       type: string
   required:
     - BUS_URL

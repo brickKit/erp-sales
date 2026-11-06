@@ -11,12 +11,13 @@ import (
 	"github.com/brickKit/be-sdk-go/v3/component"
 	"github.com/brickKit/be-sdk-go/v3/events"
 	"github.com/brickKit/be-sdk-go/v3/runtime"
+	"github.com/brickKit/be-sdk-go/v3/tiering"
 )
 
 // Identity.
 const (
 	ID       = "erp/sales"
-	Version  = "3.0.34"
+	Version  = "3.0.35"
 	GRPCPort = 9094
 )
 
@@ -167,6 +168,10 @@ func Definitions() *sdkauthz.Definitions {
 			{Key: OpSysBilling, ResourceType: System, Purpose: "action", RiskClass: "low", SideEffects: []string{"business_write"}},
 			{Key: OpResend, ResourceType: System, Purpose: "read", RiskClass: "low"},
 			{Key: OpRecover, ResourceType: System, Purpose: "read", RiskClass: "low"},
+			// the archived orders: holds, deletion approvals, the destructions' replay (assembly protocol 11)
+			{Key: OpOrderHold, ResourceType: System, Purpose: "manage", RiskClass: "high", Audit: true},
+			{Key: OpOrderDestroy, ResourceType: System, Purpose: "manage", RiskClass: "high", Audit: true},
+			{Key: OpReplay, ResourceType: System, Purpose: "manage", RiskClass: "high", SideEffects: []string{"business_write"}},
 		}}
 }
 
@@ -174,5 +179,6 @@ func Definitions() *sdkauthz.Definitions {
 func Definition() component.Definition {
 	return component.Definition{ID: ID, Version: Version, Migrations: migrations(), GRPCPort: GRPCPort, Subscribes: true,
 		Streams: []events.Stream{{Name: Stream, Partitions: 4}}, Authz: Definitions(), Resend: OpResend, Recovery: OpRecover,
+		Replay: OpReplay, Tiering: []tiering.Class{OrdersClass()},
 		New: func(rt *runtime.Runtime) (component.Module, error) { return New(rt) }}
 }

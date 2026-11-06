@@ -37,6 +37,10 @@
 | `PG_HOST`、`PG_DATABASE`、`PG_USER`、`PG_PASSWORD`、`PG_SCHEMA`（必填） | 自己的数据库，密码是密钥；迁移另用 `PG_OWNER_USER`、`PG_OWNER_PASSWORD` |
 | `BUS_URL`（必填，密钥）、`IMPLEMENTATION_INSTANCE`（必填） | 消息系统；实现实例是安装时生成的随机身份 |
 | `AUDIT_GRPC_URL` | 审计组件的系统面；缺时审计记录留在本地，按协议 03 处理 |
+| `TIERING_RETENTION_ERP_SALES_ORDERS` | 已结束订单的保留期 `最短天数/最长天数/依据`（3.0.35 起），按国家的商法与税法与客户要求在上线时给；不给则从不删除，启动时记警告 `tiering_retention_pending` |
+| `TIERING_RESIDENCE_ERP_SALES_ORDERS`、`TIERING_LIST_DAYS`、`TIERING_GRACE`、`TIERING_WINDOW` | 结束后在线保留的天数（默认 365）、订单列表的默认范围（默认 90 天）、发布后的宽限期、封存的低峰时段，见 be-sdk-go 的转层 |
+| `TIERING_STORE_URL` 与 `TIERING_*_ACCESS_KEY`、`TIERING_*_SECRET_KEY` | 冷层的对象存储（历史的异步导出用；订单本身走同库的温层） |
+| `RUN_PROFILE_*` | 运行档案：释放在线行要一次在发布之后完成的备份记录；不配则在线行一直不释放 |
 
 依赖的地址由 BrickKit 按依赖注入（`MDM_ORG_GRPC_ENDPOINT`、`MDM_PARTNER_GRPC_ENDPOINT`、`MDM_PRODUCT_GRPC_ENDPOINT`、`MDM_CURRENCY_GRPC_ENDPOINT`，装了时还有 `ERP_INVENTORY_GRPC_ENDPOINT`、`ERP_CREDIT_GRPC_ENDPOINT`），不是配置键。单号格式（`<前缀>-<法人代码>-<年>-<六位序号>`，前缀 `QT`、`SO`、`DN`）、同步预算（3 秒）、认领期限（7 天）本版固定。
 
@@ -46,6 +50,7 @@
   - `be.erp.sales.v3.BillingSourceService/Ledger`、`Claim`、`Renew`、`Confirm`、`Formalize`、`Release`（`Reverse` 本版不支持）：只对 `erp/billing` 开放，操作 `erp.sales.system.billing`；按认领身份幂等。
   - `be.erp.sales.v3.OrderService/Read`：任一组件，操作 `erp.sales.system.read`；数据是订单事件的载荷。
 - **用户面**：`contract/openapi.yaml`。操作 `erp.sales.quotation.read`、`erp.sales.quotation.edit`、`erp.sales.order.read`、`erp.sales.order.edit`、`erp.sales.order.confirm`、`erp.sales.order.cancel`、`erp.sales.delivery.read`、`erp.sales.delivery.create`、`erp.sales.price_list.read`、`erp.sales.price_list.manage`（`erp.sales.return.read`、`erp.sales.return.edit` 本版不支持）；报价、订单与交货带法人、部门、负责人三个维度（“销售只看自己的订单”“经理看本部门及下级”），价格表带法人维度。新建、确认、取消、交货要带 `Idempotency-Key`。
+- **用户面的转层管理**（SDK 的标准路由，3.0.35 起）：`/be/tiering/erp.sales.orders/holds`、`…/approvals`（操作 `erp.sales.system.order_hold`、`erp.sales.system.order_destruction`），`…/exports/{id}`（请求者本人）；订单列表的 `history=true` 与归档订单的读取见 OpenAPI（`contract/v3.0.0-alpha.3`）。系统面的证据重放 `be.evidence.v1.ReplayService/Replay`（`erp.sales.system.replay`，恢复工具）。
 - **事件**（流 `erp.sales`，schema 在 `contract/events/`）：`erp.quotation.changed.v1`、`erp.sales_order.changed.v1`、`erp.delivery.changed.v1`、`erp.price_list.changed.v1`、`erp.price_list_item.changed.v1`（完整状态），`erp.sales_order.confirmation_ended.v1`、`erp.delivery.posted.v1`、`erp.billable.changed.v1`（增量事实，按 `fact_id` 去重）。订阅 `mdm/org` 部门的全部事件（`mdm.org_unit.>`；认识的是 `mdm.org_unit.changed.v1`，别的标为不完整再取回）。
 
 ## 外壳声明

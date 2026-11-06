@@ -62,7 +62,15 @@ type Module struct {
 }
 
 // New builds the module from its runtime.
-func New(rt *runtime.Runtime) (*Module, error) { return &Module{rt: rt}, nil }
+func New(rt *runtime.Runtime) (*Module, error) {
+	m := &Module{rt: rt}
+	if rt.Tiering != nil { // the orders' history, archived ones included (assembly protocol 11)
+		if err := rt.Tiering.Register(OrderClass, m.reader()); err != nil {
+			return nil, err
+		}
+	}
+	return m, nil
+}
 
 // Routes registers the user surface (contract/openapi.yaml).
 func (m *Module) Routes(r *httpx.Routes) error {

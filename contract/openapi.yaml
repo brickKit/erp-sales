@@ -204,11 +204,30 @@ paths:
         schema:
           type: boolean
         description: orders with billable left
+      - name: history
+        in: query
+        schema:
+          type: boolean
+        description: 'every order the caller may see, the archived ones included, in one answer (no pages): complete within
+          the limit, else 202 with an export. Without it the list''s default range is the orders not ended and those created
+          in the last N days (assembly protocol 11), in pages'
       - $ref: '#/components/parameters/cursor'
       - $ref: '#/components/parameters/limit'
       responses:
+        '202':
+          description: 'history=true past the limit: an export of the whole answer; its status at
+            /be/tiering/erp.sales.orders/exports/{export} (the requester only)'
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - export
+                properties:
+                  export:
+                    type: string
         '200':
-          description: one page, newest first
+          description: 'one page, newest first (history=true: every order, next_cursor empty)'
           content:
             application/json:
               schema:
@@ -253,7 +272,7 @@ paths:
       x-operation: erp.sales.order.read
       responses:
         '200':
-          description: the order
+          description: the order; an ended order archived after a year is read here too, as it was (assembly protocol 11)
           content:
             application/json:
               schema:

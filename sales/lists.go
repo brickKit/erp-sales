@@ -2,6 +2,7 @@ package sales
 
 import (
 	"context"
+	"fmt"
 
 	sdkauthz "github.com/brickKit/be-sdk-go/v3/authz"
 	"github.com/brickKit/be-sdk-go/v3/httpx"
@@ -88,15 +89,29 @@ func (m *Module) listQuotations(c *httpx.Context) error {
 	return c.JSON(200, map[string]any{"quotations": out, "next_cursor": next})
 }
 
-// orderFrom adds the two progress filters: goods left to deliver on a confirmed order, billable left on any line.
-const orderFrom = `(SELECT s.*,
+// orderFrom adds the two progress filters: goods left to deliver on a confirmed order, billable left on any line. The
+// list's default range (assembly protocol 11, TR10): every order not ended, and those created in the last N days;
+// history=true reads them all, archived ones included.
+const orderFromAll = `(SELECT s.*,
 	s.state = 'confirmed' AND EXISTS (SELECT 1 FROM order_line l WHERE l.order_id = s.id AND l.kind = 'goods'
 		AND l.delivered < l.quantity) AS to_deliver,
 	EXISTS (SELECT 1 FROM order_line l WHERE l.order_id = s.id AND (l.claimed_qty + l.billed_qty < l.billable_qty
 		OR l.claimed_amt + l.billed_amt < l.billable_amt)) AS to_bill
-	FROM sales_order s)`
+	FROM sales_order s %s)`
+
+func (m *Module) orderFrom() string {
+	days := 90
+	if m.rt.Tiering != nil {
+		days = int(m.rt.Tiering.N.Hours() / 24)
+	}
+	return fmt.Sprintf(orderFromAll, fmt.Sprintf("WHERE s.state NOT IN ('completed', 'cancelled') OR s.created_at > "+
+		"now() - make_interval(days => %d)", days))
+}
 
 func (m *Module) listOrders(c *httpx.Context) error {
+	if c.Query("history") == "true" {
+		return m.history(c)
+	}
 	params := map[string]string{"to_deliver": "to_deliver", "to_bill": "to_bill"}
 	for k, v := range docParams {
 		params[k] = v
@@ -109,7 +124,7 @@ func (m *Module) listOrders(c *httpx.Context) error {
 	if err != nil {
 		return err
 	}
-	out, next, err := list.Page(ctx, m.rt.DB, q, orderFrom, orderCols, scanOrder,
+	out, next, err := list.Page(ctx, m.rt.DB, q, m.orderFrom(), orderCols, scanOrder,
 		func(r Order) ([]string, string) { return []string{r.CreatedAt}, r.ID })
 	if err != nil {
 		return err

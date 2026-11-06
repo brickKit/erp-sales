@@ -6,6 +6,7 @@ import (
 
 	"github.com/brickKit/be-sdk-go/v3/bizdate"
 	"github.com/brickKit/be-sdk-go/v3/db"
+	"github.com/brickKit/be-sdk-go/v3/errs"
 	"github.com/brickKit/be-sdk-go/v3/httpx"
 	"github.com/brickKit/be-sdk-go/v3/idem"
 	"github.com/brickKit/be-sdk-go/v3/ids"
@@ -85,6 +86,15 @@ func (m *Module) createOrder(c *httpx.Context) error {
 
 func (m *Module) getOrder(c *httpx.Context) error {
 	o, err := m.order(c.Ctx(), c.Param("id"))
+	if errs.Is(err, "be", errs.ReasonNotFound) { // not online: archived, read by its key (assembly protocol 11)
+		archived, found, aerr := m.archived(c.Ctx(), c.Param("id"))
+		if aerr != nil {
+			return aerr
+		}
+		if found {
+			o, err = archived, nil
+		}
+	}
 	if err != nil {
 		return err
 	}

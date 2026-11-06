@@ -31,12 +31,14 @@ import (
 	"time"
 
 	"github.com/brickKit/be-sdk-go/v3/bizdate"
+	"github.com/brickKit/be-sdk-go/v3/component"
 	"github.com/brickKit/be-sdk-go/v3/config"
 	"github.com/brickKit/be-sdk-go/v3/events"
 	"github.com/brickKit/be-sdk-go/v3/events/bus"
 	"github.com/brickKit/be-sdk-go/v3/events/jetstream"
 	"github.com/brickKit/be-sdk-go/v3/ids"
 	"github.com/brickKit/be-sdk-go/v3/launcher"
+	"github.com/brickKit/be-sdk-go/v3/runtime"
 	"github.com/brickKit/be-sdk-go/v3/sectest"
 	creditv3 "github.com/brickKit/erp-credit/contract/v3/gen/go/be/erp/credit/v3"
 	inventoryv3 "github.com/brickKit/erp-inventory/contract/v3/gen/go/be/erp/inventory/v3"
@@ -75,6 +77,7 @@ type fixture struct {
 	cred  *creditStandIn
 	tr    events.Transport
 	year  string
+	rt    *runtime.Runtime // the member's runtime (its tiering catalog, driven by the tiering step)
 
 	le, d1, d2, cust, blocked, screw, install, bolt, wh string
 	// what one step leaves for the next: orders by letter, their confirmation processes
@@ -92,6 +95,7 @@ func TestSalesEndToEnd(t *testing.T) {
 	fx.departments()
 	fx.outbox()
 	fx.recoveryChecks()
+	fx.tiering()
 }
 
 // start makes the world, the stand-ins and mdm/org's stream, then migrates and runs the member.
@@ -187,10 +191,13 @@ func start(t *testing.T) *fixture {
 		Env: config.Env{LookupEnv: func(k string) (string, bool) { v, ok := env[k]; return v, ok }, Read: os.ReadFile}}
 	migrate := opts
 	migrate.Args = []string{"migrate"}
-	require.Equal(t, launcher.ExitOK, launcher.Run(ctx, Definition(), migrate))
+	def := Definition()
+	newModule := def.New
+	def.New = func(rt *runtime.Runtime) (component.Module, error) { fx.rt = rt; return newModule(rt) }
+	require.Equal(t, launcher.ExitOK, launcher.Run(ctx, def, migrate))
 	sctx, stop := context.WithCancel(ctx)
 	done := make(chan int, 1)
-	go func() { done <- launcher.Run(sctx, Definition(), opts) }()
+	go func() { done <- launcher.Run(sctx, def, opts) }()
 	t.Cleanup(func() { stop(); <-done })
 	require.Eventually(t, func() bool {
 		r, err := http.Get(itBase + "/readyz")
