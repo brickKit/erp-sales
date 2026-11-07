@@ -159,6 +159,8 @@
 
 ## 实现状态
 
+3.0.42：be-sdk-go alpha.117（全系统同一个 SDK 版本；SDK 加了预占的参与方 `reserve`，线协议第 16 章）
+
 3.0.41：合并安全的单元测试扩到 `internal/` 下全部包（分层以来只查入口包，装配项目的结构问题 SF24）；依赖换到分层之后的版本：`mdm/currency@3.0.30`、`mdm/org@3.0.31`、`mdm/partner@3.0.34`、`mdm/product@3.0.33`、`erp/credit@3.0.30`、`erp/inventory@3.0.30`。
 
 3.0.40：订单的规则集中一处，行为不变：生命周期是一张表（`internal/orders/lifecycle.go`，与本页“订单的状态”逐格相同，单元测试比较），订单状态只经 `Transition` 写；可出账台账只经 `internal/ledger` 的五个函数写；入口包的结构检查守住这两条，并登记表以外还读订单状态的地方；新的集成测试步骤 `lifecycle` 锁住业务流程走不到的格子。
