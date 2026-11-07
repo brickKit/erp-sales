@@ -4,19 +4,19 @@ kind: Component
 metadata:
   id: erp/sales
   name: Sales
-  version: 3.0.35
+  version: 3.0.36
   description: "Quotations, sales orders with goods and service lines, price lists; the order's confirmation as protocol 04's coordinator over the stock and credit reservations, deliveries through the inventory, and the billable ledger erp/billing claims from (protocol 05)"
   repository: https://github.com/brickKit/erp-sales
 
 dependencies:
   components:
-    - mdm/currency@3.0.26
-    - mdm/org@3.0.27
-    - mdm/partner@3.0.30
-    - mdm/product@3.0.29
-    - id: erp/credit@3.0.26
+    - mdm/currency@3.0.27
+    - mdm/org@3.0.28
+    - mdm/partner@3.0.31
+    - mdm/product@3.0.30
+    - id: erp/credit@3.0.27
       optional: true
-    - id: erp/inventory@3.0.26
+    - id: erp/inventory@3.0.27
       optional: true
 
 events:
@@ -221,6 +221,8 @@ configSchema:
     TIERING_RESIDENCE_ERP_SALES_ORDERS:
       type: string
     TIERING_RETENTION_ERP_SALES_ORDERS:
+      type: string
+    TIERING_ROUTE_ERP_SALES_ORDERS:
       type: string
     TIERING_STORE_URL:
       type: string
