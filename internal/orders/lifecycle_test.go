@@ -1,6 +1,10 @@
 package orders
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,5 +43,84 @@ func TestTheLifecycleDecidesEveryCell(t *testing.T) {
 func TestStoredPhaseIsEnough(t *testing.T) {
 	for _, c := range StoredPhaseCommands {
 		assert.Equal(t, Decide(Confirmed, c), Decide(Cancelling, c), "%s cannot be decided on the stored phase", c)
+	}
+}
+
+// TestTheDesignDocumentIsTheLifecycle: the table in docs/design.md ("订单的状态") is this table, cell by cell (rule,
+// effect, state after, process).
+func TestTheDesignDocumentIsTheLifecycle(t *testing.T) {
+	doc, err := os.ReadFile("../../docs/design.md")
+	require.NoError(t, err)
+	var phases []Phase
+	seen := map[Command]bool{}
+	cell := regexp.MustCompile("^(允许|拒绝|忽略|→ `(\\w+)`|经确认过程|经取消过程) (SO\\d\\d)$")
+	tick := regexp.MustCompile("`(\\w+)`")
+	for _, line := range strings.Split(string(doc), "\n") {
+		cells := strings.Split(strings.Trim(line, "| "), " | ")
+		if strings.HasPrefix(line, "| 命令 | ") {
+			for _, c := range cells[1:] {
+				phases = append(phases, Phase(strings.Trim(c, "`")))
+			}
+			require.Equal(t, Phases, phases, "the document's phases are Phases, in order")
+			continue
+		}
+		if phases == nil || !strings.HasPrefix(line, "| ") || len(cells) != len(phases)+1 {
+			if phases != nil && len(seen) > 0 && !strings.HasPrefix(line, "| ") {
+				break // the end of the table
+			}
+			continue
+		}
+		names := tick.FindAllStringSubmatch(cells[0], -1)
+		if len(names) == 0 {
+			continue // the separator row
+		}
+		c := Command(names[len(names)-1][1])
+		require.Contains(t, lifecycle, c, "the document has a command the code does not: %s", c)
+		seen[c] = true
+		for i, p := range phases {
+			m := cell.FindStringSubmatch(cells[i+1])
+			require.NotNil(t, m, "%s in %s: %q is not a cell", c, p, cells[i+1])
+			want := lifecycle[c][p]
+			got := Decision{Rule: m[3]}
+			switch {
+			case m[1] == "允许":
+				got.Effect = Proceed
+			case m[1] == "拒绝":
+				got.Effect = Refuse
+			case m[1] == "忽略":
+				got.Effect = Ignore
+			case m[1] == "经确认过程":
+				got.Effect, got.Via = Process, "confirmation"
+			case m[1] == "经取消过程":
+				got.Effect, got.Via = Process, "cancel"
+			default:
+				got.Effect, got.To = Move, m[2]
+			}
+			assert.Equal(t, [4]string{want.Rule, string(want.Effect), want.To, want.Via},
+				[4]string{got.Rule, string(got.Effect), got.To, got.Via}, "%s in %s: the document and the code differ", c, p)
+		}
+	}
+	assert.Len(t, seen, len(Commands), "the document decides every command")
+}
+
+// TestEveryRuleIsTested: each rule of the lifecycle is named by a test that exercises it (a comment in itest/).
+func TestEveryRuleIsTested(t *testing.T) {
+	files, err := filepath.Glob("../../itest/*_test.go")
+	require.NoError(t, err)
+	var tests strings.Builder
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		require.NoError(t, err)
+		tests.Write(b)
+	}
+	named := map[string]bool{}
+	for _, r := range regexp.MustCompile(`\bSO\d\d\b`).FindAllString(tests.String(), -1) {
+		named[r] = true
+	}
+	for _, c := range Commands {
+		for _, p := range Phases {
+			rule := lifecycle[c][p].Rule
+			assert.True(t, named[rule], "no test in itest/ names %s (%s in %s)", rule, c, p)
+		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 
 // deliveries: the delivery ID is the consumption ID (RS19); the billable amount grows by rounding and the last
 // delivery makes it exactly the line amount; a refused issue fails the delivery; an unanswered one is posted later.
+// SO12: a confirmed order is delivered.
 func (fx *fixture) deliveries() {
 	t, inv := fx.t, fx.inv
 	a, b := fx.orders["A"], fx.orders["B"]

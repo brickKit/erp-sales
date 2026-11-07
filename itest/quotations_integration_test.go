@@ -10,7 +10,7 @@ import (
 )
 
 // pricingAndQuotations: a price per EA, a box takes it times the factor (docs/rules/pricing.md); a quotation is sent
-// and accepted into an order draft with the same prices; missing prices and ineligible customers are refused.
+// and accepted into an order draft with the same prices (SO01); missing prices and ineligible customers are refused.
 func (fx *fixture) pricingAndQuotations() {
 	t, alice := fx.t, fx.alice
 	code, pl := alice.do("POST", "/api/sales/price-lists", map[string]any{"legal_entity_id": fx.le, "currency": "CNY",

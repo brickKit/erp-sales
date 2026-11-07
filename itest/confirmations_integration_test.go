@@ -15,7 +15,8 @@ import (
 )
 
 // confirmations walks protocol 04's process table: confirmed, processing and recovered, rejected by a participant,
-// a lost answer, an expired branch, a cancel while confirming, a service order, a confirmed order cancelled.
+// a lost answer, an expired branch, a cancel while confirming, a service order, a confirmed order cancelled. The
+// order's lifecycle (docs/design.md): SO02 (no change while confirming), SO03, SO04, SO05, SO06, SO08, SO09, SO10.
 func (fx *fixture) confirmations() {
 	t, inv, cred := fx.t, fx.inv, fx.cred
 

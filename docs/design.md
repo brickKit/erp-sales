@@ -63,20 +63,44 @@
 
 ## 订单的状态
 
-| 当前状态 | 命令或事件 | 结果状态 |
-| --- | --- | --- |
-| （无） | 新建（或报价转订单） | `draft` |
-| `draft` | 修改 | `draft` |
-| `draft` | 提交确认 | `confirming`（不能修改） |
-| `confirming` | 过程 `confirmed` | `confirmed` |
-| `confirming` | 过程 `rejected` 或 `cancelled` | `draft`（附上次的原因，可以改了再确认） |
-| `draft` | 取消 | `cancelled` |
-| `confirming` | 取消 | 过程转 `cancelling`；过程 `cancelled` 后订单 `cancelled` |
-| `confirmed` | 取消（没有任何交货） | 对全部分支发取消后 `cancelled` |
-| `confirmed` | 取消（已有交货） | 拒绝：已交货的部分走退货，未交货部分的关闭以后提供 |
-| `confirmed` | 全部明细交完并全部出账 | `completed`；释放剩余分支 |
-| `confirmed` | 关闭未交货部分（以后） | `closed`：对分支发取消，只释放未消耗的部分（协议 04 的 RS13）；可出账台账的 `billable` 缩到已交货，不能低于 `claimed + billed`（否则拒绝，BL03）；款到发货时向财务冲回放行额度（协议 05）；已交货的部分出完账后订单结束 |
-| `confirmed` | 修订 | 以后 |
+订单的生命周期是一张表：每个**阶段**（存下的状态，外加“已确认且取消过程进行中”的 `cancelling`）× 每个**命令**一格，格里写这个命令在这个阶段做什么与规则编号。代码里是同一张表（`internal/orders/lifecycle.go`），单元测试逐格比较这里与代码，不一致就失败；加一个状态或命令，就是加一列或一行，每一格都要定下来。
+
+格的写法：`允许`（照常做，订单状态不变）、`拒绝`（文字在代码的表里）、`忽略`（什么也不做，照已做完回答）、`→ <状态>`（做完订单变成这个状态）、`经确认过程`、`经取消过程`（订单在过程结束时变）。
+
+| 命令 | `draft` | `confirming` | `confirmed` | `cancelling` | `completed` | `cancelled` |
+| --- | --- | --- | --- | --- | --- | --- |
+| 修改 `edit` | 允许 SO02 | 拒绝 SO02 | 拒绝 SO02 | 拒绝 SO02 | 拒绝 SO02 | 拒绝 SO02 |
+| 提交确认 `confirm` | → `confirming` SO03 | 拒绝 SO03 | 拒绝 SO03 | 拒绝 SO03 | 拒绝 SO03 | 拒绝 SO03 |
+| 取消 `cancel` | → `cancelled` SO07 | 经确认过程 SO08 | 经取消过程 SO09 | 忽略 SO11 | 拒绝 SO15 | 忽略 SO11 |
+| 交货 `deliver` | 拒绝 SO12 | 拒绝 SO12 | 允许 SO12 | 拒绝 SO12 | 拒绝 SO12 | 拒绝 SO12 |
+| 出账认领 `claim` | 拒绝 SO13 | 拒绝 SO13 | 允许 SO13 | 拒绝 SO13 | 拒绝 SO13 | 拒绝 SO13 |
+| 完成 `complete` | 忽略 SO14 | 忽略 SO14 | → `completed` SO14 | 忽略 SO14 | 忽略 SO14 | 忽略 SO14 |
+| 确认过程 `confirmed` `confirmation_confirmed` | 忽略 SO04 | → `confirmed` SO04 | 忽略 SO04 | 忽略 SO04 | 忽略 SO04 | 忽略 SO04 |
+| 确认过程 `rejected` `confirmation_rejected` | 忽略 SO05 | → `draft` SO05 | 忽略 SO05 | 忽略 SO05 | 忽略 SO05 | 忽略 SO05 |
+| 确认过程 `cancelled` `confirmation_cancelled` | 忽略 SO06 | → `cancelled` SO06 | 忽略 SO06 | 忽略 SO06 | 忽略 SO06 | 忽略 SO06 |
+| 取消过程结束 `cancel_ended` | 忽略 SO10 | 忽略 SO10 | → `cancelled` SO10 | → `cancelled` SO10 | 忽略 SO10 | 忽略 SO10 |
+
+规则目录（订单的生命周期；跨组件的规则用协议的编号：协议 04 的 RS、协议 05 的 BL）：
+
+| 规则 | 内容 | 代码 | 测试 |
+| --- | --- | --- | --- |
+| SO01 | 新建与报价转订单得到 `draft`（表的默认值） | `orders.CreateOrder`、`quotations.AcceptQuotation` | `quotations`、`confirmations` 两步 |
+| SO02 | 只有草稿能修改；确认中的拒绝（RS09） | `orders.UpdateOrder` | `confirmations`、`lifecycle` |
+| SO03 | 只有草稿能提交确认；提交时订单与取证时相同（版本），否则重新取证；订单进入 `confirming`。提交本身不审计，确认的结果审计 | `confirmations.startConfirmation` | `confirmations`、`lifecycle` |
+| SO04 | 确认过程 `confirmed`：订单 `confirmed`，服务明细整行可出账（`ledger.ServiceConfirmed`）；只认订单当前的确认过程 | `confirmations.finish` | `confirmations` |
+| SO05 | 确认过程 `rejected`（参与方拒绝、处理超时）：订单回到 `draft`，附上次的原因，可以改了再确认 | `confirmations.finish` | `confirmations` |
+| SO06 | 确认中被取消，确认过程 `cancelled`：订单 `cancelled` | `confirmations.finish` | `confirmations` |
+| SO07 | 草稿取消立即 `cancelled` | `confirmations.CancelOrder` | `lifecycle` |
+| SO08 | 确认中取消：确认过程转 `cancelling`，对全部参与方发取消（RS04） | `confirmations.CancelOrder` | `confirmations` |
+| SO09 | 已确认的取消：没有交货、没有出账（认领或已出账）才行，经取消过程对全部分支发取消；否则拒绝（已交货的走退货，关闭未交货部分以后提供，RS13） | `confirmations.CancelOrder` | `confirmations`、`lifecycle` |
+| SO10 | 取消过程结束：订单 `cancelled` | `confirmations.finish` | `confirmations` |
+| SO11 | 取消中、已取消的再取消：照原样回答，不起第二个过程 | `confirmations.CancelOrder` | `lifecycle` |
+| SO12 | 只有已确认、不在取消中的订单能交货 | `deliveries.CreateDelivery` | `deliveries`、`lifecycle` |
+| SO13 | 只有已确认、不在取消中的订单能被认领，否则答问题 `order_not_billable` | `billingsource.Claim` | `billingSource`、`lifecycle` |
+| SO14 | 全部明细交完并全部出账：订单 `completed`，释放剩余分支 | `billingsource.completeIfDone` | `billingSource` |
+| SO15 | 已完成的订单不能取消 | `confirmations.CancelOrder` | `lifecycle` |
+
+以后（不在本版）：已确认订单的关闭未交货部分（`closed`：对分支发取消，只释放未消耗的部分，协议 04 的 RS13；可出账台账的 `billable` 缩到已交货，不能低于 `claimed + billed`，否则拒绝，BL03；款到发货时向财务冲回放行额度，协议 05；已交货的部分出完账后订单结束）；修订。
 
 交货进度与出账进度不是订单状态，是明细上的量（已交货、可出账、已出账），列表可以按它们筛选。
 

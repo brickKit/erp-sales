@@ -18,7 +18,8 @@ import (
 )
 
 // billingSource calls the billing source as erp/billing: BL01, BL02, BL24, BL05/BL26, two claims racing for one
-// line, formalizing completes the order and releases its branches; only erp/billing may call it.
+// line, formalizing completes the order and releases its branches; only erp/billing may call it. SO13 (a confirmed
+// order is claimed), SO14 (every line delivered and billed completes the order).
 func (fx *fixture) billingSource() {
 	t, ctx := fx.t, fx.ctx
 	a, b := fx.orders["A"], fx.orders["B"]

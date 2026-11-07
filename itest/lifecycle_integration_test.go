@@ -4,8 +4,8 @@ package itest
 
 import (
 	"github.com/brickKit/be-sdk-go/v3/ids"
-	core "github.com/brickKit/erp-sales/v3/internal/core"
 	salesv3 "github.com/brickKit/erp-sales/contract/v3/gen/go/be/erp/sales/v3"
+	core "github.com/brickKit/erp-sales/v3/internal/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -16,7 +16,7 @@ import (
 // once and cancelling it again answers the same; a cancelled order is neither changed nor confirmed; a draft is
 // neither delivered nor claimed; a completed order is neither cancelled, delivered nor claimed; a confirmed order
 // with a delivery is not cancelled; an order whose cancel process is under way is neither delivered nor claimed, and
-// cancelling it again starts no second process.
+// cancelling it again starts no second process. Rules (docs/design.md): SO02, SO03, SO07, SO09, SO11, SO12, SO13, SO15.
 func (fx *fixture) lifecycle() {
 	t, ctx := fx.t, fx.ctx
 	conn, err := grpc.NewClient(itSystem, grpc.WithTransportCredentials(credentials.NewTLS(fx.w.TLS(t, core.Billing).ClientConfig(core.ID))))
