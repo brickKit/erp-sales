@@ -134,12 +134,14 @@ func UpdateOrder(m *core.Base, c *httpx.Context) error {
 		if err != nil {
 			return err
 		}
-		switch {
-		case o.State == "confirming":
-			return core.ErrState.New("the order is being confirmed; it changes after the confirmation ends")
-		case o.State != "draft":
-			return core.ErrState.New("only a draft order changes; this one is " + o.State + " (revisions come later)")
-		case in.Version != nil && *in.Version != o.Version:
+		ph, err := PhaseOf(ctx, tx, o)
+		if err != nil {
+			return err
+		}
+		if d := Decide(ph, Edit); d.Effect == Refuse {
+			return Refused(d, o)
+		}
+		if in.Version != nil && *in.Version != o.Version {
 			return core.ErrVersion.New(fmt.Sprintf("the order is at version %d", o.Version))
 		}
 		date := o.BusinessDate
@@ -221,18 +223,6 @@ func ListOrders(m *core.Base, c *httpx.Context) error {
 		return err
 	}
 	return c.JSON(200, map[string]any{"orders": out, "next_cursor": next})
-}
-
-func SetOrderState(m *core.Base, ctx context.Context, tx db.Tx, o core.Order, state string, reason *string, actor, op string) error {
-	if _, err := tx.Exec(ctx, `UPDATE sales_order SET state = $2, reason = $3, version = version + 1, updated_at = now()
-		WHERE id = $1`, o.ID, state, reason); err != nil {
-		return err
-	}
-	after, err := core.EmitOrder(m, ctx, tx, o.ID)
-	if err != nil {
-		return err
-	}
-	return core.Change(m, ctx, tx, actor, op, core.Orders, o.ID, after)
 }
 
 func UnsupportedOnOrder(m *core.Base, what string) httpx.Handler {

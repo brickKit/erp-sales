@@ -2,6 +2,7 @@ package confirmations
 
 import (
 	"context"
+	"fmt"
 
 	core "github.com/brickKit/erp-sales/v3/internal/core"
 	documents "github.com/brickKit/erp-sales/v3/internal/documents"
@@ -30,16 +31,9 @@ func StartBranchProcess(m *core.Base, ctx context.Context, tx db.Tx, o core.Orde
 	return id, err
 }
 
-// OpenCancel reports whether a confirmed order is being cancelled (nothing more is delivered or billed then).
-func OpenCancel(ctx context.Context, tx db.Tx, orderID string) (bool, error) {
-	var open bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM confirmation WHERE order_id = $1 AND kind = 'cancel'
-		AND state = 'cancelling')`, orderID).Scan(&open)
-	return open, err
-}
-
-// CancelOrder cancels a draft at once, a confirming order through its process (cancelling, RS04) and a confirmed order
-// with nothing delivered or billed through a cancel process; it follows a process for the synchronous budget.
+// CancelOrder does what the lifecycle decides (orders.Cancel): a draft is cancelled at once, a confirming order through
+// its confirmation (cancelling, RS04), a confirmed order with nothing delivered or billed through a cancel process; it
+// follows a process for the synchronous budget.
 func CancelOrder(m *core.Base, c *httpx.Context) error {
 	req, err := idem.FromHTTP(c)
 	if err != nil {
@@ -60,20 +54,27 @@ func CancelOrder(m *core.Base, c *httpx.Context) error {
 		if err != nil {
 			return idem.Outcome{}, err
 		}
-		switch o.State {
-		case "cancelled":
-		case "draft":
-			if err := orders.SetOrderState(m, ctx, tx, o, "cancelled", nil, actor, core.OpOrderCancel); err != nil {
+		ph, err := orders.PhaseOf(ctx, tx, o)
+		if err != nil {
+			return idem.Outcome{}, err
+		}
+		d := orders.Decide(ph, orders.Cancel)
+		switch {
+		case d.Effect == orders.Ignore:
+		case d.Effect == orders.Refuse:
+			return idem.Outcome{}, orders.Refused(d, o)
+		case d.Effect == orders.Move:
+			if err := orders.Transition(m, ctx, tx, o, d, orders.Set{}, actor); err != nil {
 				return idem.Outcome{}, err
 			}
-		case "confirming":
+		case d.Via == "confirmation":
 			if _, err := tx.Exec(ctx, `UPDATE confirmation SET state = 'cancelling', reason = 'cancelled', actor = $2,
 				updated_at = now() WHERE id = $1 AND state IN ('reserving', 'committing', 'rejecting')`,
 				Deref(o.ConfirmationID), actor); err != nil {
 				return idem.Outcome{}, err
 			}
 			procID = Deref(o.ConfirmationID)
-		case "confirmed":
+		case d.Via == "cancel":
 			var started bool
 			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM delivery WHERE order_id = $1 AND state <> 'failed')
 				OR EXISTS (SELECT 1 FROM order_line WHERE order_id = $1 AND (claimed_qty > 0 OR billed_qty > 0
@@ -81,18 +82,13 @@ func CancelOrder(m *core.Base, c *httpx.Context) error {
 				return idem.Outcome{}, err
 			}
 			if started {
-				return idem.Outcome{}, core.ErrState.New("the order has deliveries or billing: what was delivered goes back " +
-					"through a return; closing what is not delivered comes later")
-			}
-			open, err := OpenCancel(ctx, tx, o.ID)
-			if err != nil || open {
-				return documents.IDResult(o.ID), err
+				return idem.Outcome{}, core.ErrState.New(orders.GuardNothingStarted)
 			}
 			if procID, err = StartBranchProcess(m, ctx, tx, o, "cancel", actor); err != nil {
 				return idem.Outcome{}, err
 			}
 		default:
-			return idem.Outcome{}, core.ErrState.New("a " + o.State + " order is not cancelled")
+			return idem.Outcome{}, fmt.Errorf("confirmations: cancel decided %+v", d)
 		}
 		return documents.IDResult(o.ID), nil
 	})

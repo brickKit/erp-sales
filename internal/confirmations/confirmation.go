@@ -9,6 +9,7 @@ import (
 	core "github.com/brickKit/erp-sales/v3/internal/core"
 	documents "github.com/brickKit/erp-sales/v3/internal/documents"
 	masterdata "github.com/brickKit/erp-sales/v3/internal/masterdata"
+	orders "github.com/brickKit/erp-sales/v3/internal/orders"
 
 	"github.com/brickKit/be-sdk-go/v3/canon"
 	"github.com/brickKit/be-sdk-go/v3/db"
@@ -181,7 +182,8 @@ func ConfirmOrder(m *core.Base, c *httpx.Context) error {
 func startConfirmation(m *core.Base, ctx context.Context, req idem.Request, actor string, o core.Order) (idem.Outcome, bool, error) {
 	var rate *masterdata.Rate
 	var participants []string
-	if o.State == "draft" {
+	gathered := orders.Decide(orders.StoredPhase(o), orders.Confirm).Effect == orders.Move
+	if gathered { // the evidence only when the order could be confirmed: T1 decides again
 		asked := time.Now()
 		le, err := masterdata.LegalEntityOf(m, ctx, o.LegalEntityID)
 		if err != nil {
@@ -232,12 +234,15 @@ func startConfirmation(m *core.Base, ctx context.Context, req idem.Request, acto
 		if err != nil {
 			return idem.Outcome{}, err
 		}
-		switch {
-		case cur.State == "confirming":
-			return idem.Outcome{}, core.ErrState.New("the order is being confirmed (confirmation " + Deref(cur.ConfirmationID) + ")")
-		case cur.State != "draft":
-			return idem.Outcome{}, core.ErrState.New("only a draft order is confirmed; this one is " + cur.State)
-		case o.State != "draft" || cur.Version != o.Version:
+		ph, err := orders.PhaseOf(ctx, tx, cur)
+		if err != nil {
+			return idem.Outcome{}, err
+		}
+		d := orders.Decide(ph, orders.Confirm)
+		if d.Effect == orders.Refuse {
+			return idem.Outcome{}, orders.Refused(d, cur)
+		}
+		if !gathered || cur.Version != o.Version { // orders.GuardEvidence
 			return idem.Outcome{}, errStale
 		}
 		if rate != nil {
@@ -258,11 +263,7 @@ func startConfirmation(m *core.Base, ctx context.Context, req idem.Request, acto
 				return idem.Outcome{}, err
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE sales_order SET state = 'confirming', confirmation_id = $2, reason = NULL,
-			version = version + 1, updated_at = now() WHERE id = $1`, o.ID, id); err != nil {
-			return idem.Outcome{}, err
-		}
-		if _, err := core.EmitOrder(m, ctx, tx, o.ID); err != nil {
+		if err := orders.Transition(m, ctx, tx, cur, d, orders.Set{ConfirmationID: id}, actor); err != nil {
 			return idem.Outcome{}, err
 		}
 		if _, err := m.RT.Work.Enqueue(ctx, tx, JobAdvance, advanceArgs{ID: id}); err != nil {

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	orders "github.com/brickKit/erp-sales/v3/internal/orders"
+
 	confirmations "github.com/brickKit/erp-sales/v3/internal/confirmations"
 	core "github.com/brickKit/erp-sales/v3/internal/core"
 	documents "github.com/brickKit/erp-sales/v3/internal/documents"
@@ -139,14 +141,12 @@ func CreateDelivery(m *core.Base, c *httpx.Context) error {
 		if err != nil {
 			return idem.Outcome{}, err
 		}
-		if cur.State != "confirmed" {
-			return idem.Outcome{}, core.ErrState.New("only a confirmed order is delivered; this one is " + cur.State)
-		}
-		if open, err := confirmations.OpenCancel(ctx, tx, o.ID); err != nil || open {
-			if err == nil {
-				err = core.ErrState.New("the order is being cancelled")
-			}
+		ph, err := orders.PhaseOf(ctx, tx, cur)
+		if err != nil {
 			return idem.Outcome{}, err
+		}
+		if d := orders.Decide(ph, orders.Deliver); d.Effect == orders.Refuse {
+			return idem.Outcome{}, orders.Refused(d, cur)
 		}
 		id := ids.New().String()
 		if _, err := tx.Exec(ctx, `INSERT INTO delivery (id, number, order_id, legal_entity_id, owner_id, department_id,

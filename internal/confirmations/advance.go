@@ -341,20 +341,28 @@ func finish(m *core.Base, ctx context.Context, tx db.Tx, p process) error {
 	if err != nil {
 		return err
 	}
+	ph, err := orders.PhaseOf(ctx, tx, o)
+	if err != nil {
+		return err
+	}
 	switch p.Kind {
-	case "release":
+	case "release": // the order completed before; its state does not change
 		return nil
 	case "cancel":
-		if o.State != "confirmed" {
+		d := orders.Decide(ph, orders.CancelEnded)
+		if d.Effect != orders.Move {
 			return nil
 		}
-		return orders.SetOrderState(m, ctx, tx, o, "cancelled", nil, p.Actor, core.OpOrderCancel)
+		return orders.Transition(m, ctx, tx, o, d, orders.Set{}, p.Actor)
 	}
-	if o.State != "confirming" || Deref(o.ConfirmationID) != p.ID {
+	ended := map[string]orders.Command{"confirmed": orders.ConfirmationConfirmed, "rejected": orders.ConfirmationRejected,
+		"cancelled": orders.ConfirmationCancelled}[p.State]
+	d := orders.Decide(ph, ended)
+	if d.Effect != orders.Move || Deref(o.ConfirmationID) != p.ID { // orders.GuardCurrentConfirmation
 		return nil
 	}
-	switch p.State {
-	case "confirmed":
+	switch ended {
+	case orders.ConfirmationConfirmed:
 		lines, err := tx.Query(ctx, `UPDATE order_line SET billable_qty = quantity, billable_amt = net
 			WHERE order_id = $1 AND kind = 'service' RETURNING id::text`, o.ID)
 		if err != nil {
@@ -373,15 +381,11 @@ func finish(m *core.Base, ctx context.Context, tx db.Tx, p process) error {
 		if err := ledger.LedgerFacts(m, ctx, tx, o.ID, o.LegalEntityID, service, "service_confirmed"); err != nil {
 			return err
 		}
-		if err := orders.SetOrderState(m, ctx, tx, o, "confirmed", nil, p.Actor, core.OpOrderConfirm); err != nil {
+		if err := orders.Transition(m, ctx, tx, o, d, orders.Set{}, p.Actor); err != nil {
 			return err
 		}
-	case "rejected":
-		if err := orders.SetOrderState(m, ctx, tx, o, "draft", p.Reason, p.Actor, core.OpOrderConfirm); err != nil {
-			return err
-		}
-	case "cancelled":
-		if err := orders.SetOrderState(m, ctx, tx, o, "cancelled", p.Reason, p.Actor, core.OpOrderCancel); err != nil {
+	default: // rejected, cancelled: the order keeps the process's reason
+		if err := orders.Transition(m, ctx, tx, o, d, orders.Set{Reason: p.Reason}, p.Actor); err != nil {
 			return err
 		}
 	}

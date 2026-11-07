@@ -217,12 +217,12 @@ func Claim(m *core.Base, ctx context.Context, in *salesv3.ClaimRequest) (*salesv
 		} else if !errors.Is(err, core.ErrNone) {
 			return err
 		}
-		open, err := confirmations.OpenCancel(ctx, tx, o.ID)
+		ph, err := orders.PhaseOf(ctx, tx, o)
 		if err != nil {
 			return err
 		}
-		if o.State != "confirmed" || open {
-			out = &salesv3.ClaimResponse{Problems: []*salesv3.ClaimProblem{{Reason: "order_not_billable"}}}
+		if d := orders.Decide(ph, orders.Claim); d.Effect == orders.Refuse {
+			out = &salesv3.ClaimResponse{Problems: []*salesv3.ClaimProblem{{Reason: d.Refusal}}}
 			return nil
 		}
 		byID := map[string]core.OrderLine{}
@@ -422,11 +422,16 @@ func completeIfDone(m *core.Base, ctx context.Context, tx db.Tx, orderID, actor 
 		((kind = 'goods' AND delivered < quantity) OR billed_qty < quantity OR billed_amt < net))`, orderID).Scan(&done); err != nil {
 		return err
 	}
-	if !done || o.State != "confirmed" {
+	ph, err := orders.PhaseOf(ctx, tx, o)
+	if err != nil {
+		return err
+	}
+	d := orders.Decide(ph, orders.Complete)
+	if !done || d.Effect != orders.Move { // orders.GuardAllDone
 		_, err := core.EmitOrder(m, ctx, tx, orderID)
 		return err
 	}
-	if err := orders.SetOrderState(m, ctx, tx, o, "completed", nil, actor, core.OpSysBilling); err != nil {
+	if err := orders.Transition(m, ctx, tx, o, d, orders.Set{}, actor); err != nil {
 		return err
 	}
 	_, err = confirmations.StartBranchProcess(m, ctx, tx, o, "release", actor)
