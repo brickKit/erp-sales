@@ -26,7 +26,7 @@
 
 | 命令 | 本组件做什么 |
 | --- | --- |
-| 认领 | 每行每维检查 `claimed + billed + 数量 ≤ billable`，全部满足才建认领 `pending`（期限 7 天）并增加 `claimed`，否则整体拒绝（BL01）；同身份同内容返回原认领（BL02），不同内容冲突 |
+| 认领 | 订单不是已确认、或正在取消（有进行中的 `cancel` 过程）时答问题 `order_not_billable`；每行每维检查 `claimed + billed + 数量 ≤ billable`，全部满足才建认领 `pending`（期限 7 天）并增加 `claimed`，否则整体拒绝（BL01）；同身份同内容返回原认领（BL02），不同内容冲突 |
 | 续期 | 只对 `pending`；延长期限 |
 | 确认 | `pending` → `confirmed`；已到期则拒绝（BL05、BL26）；重复确认返回同一结果（BL24） |
 | 正式化 | 只对 `confirmed`；每行按实际数量（≤ 认领）：`claimed` 减认领数、`billed` 加实际数；同数量重复无害 |

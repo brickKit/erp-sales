@@ -4,46 +4,47 @@
 
 ## 代码地图
 
-| 位置 | 内容 |
+代码按业务模块分层。**先读这一节，再进目录**：每个代码目录都有自己的 `AGENTS.md`（同目录的 `CLAUDE.md` 让 Claude Code 读这个目录的文件时自动带上它），写这一层负责什么、不负责什么、每个文件、依赖谁、被谁用、测在哪；读完就知道要不要往下走。
+
+| 目录 | 是什么 |
 | --- | --- |
-| `sales/definition.go` | 组件定义：身份、依赖（库存与信用可选）、流与事件类型、资源与操作、三个维度、参数（同步预算、W、认领期限） |
-| `sales/checks.go` | 整套恢复的核对（线协议第 14 章，SDK 的 `CheckService`，只许恢复工具调用）：本组件审计过的对象按版本答“还在不在”（`Presence`）；协议 04 的检查登记在这里，写在 `recoverycheck.go`（`erp.sales.reservations`） |
-| `sales/module.go` | 路由与系统面的注册、本组件的错误原因、订阅与后台工作的声明、`check`、`decimal`、审计与事件的写法 |
-| `sales/upstream.go` | 事务外的取证：法人、部门、客户、产品的资格与快照、换算（`convert`）、即期汇率、币种小数位 |
-| `sales/orgunits.go` | 部门投影（`org_units`）：按聚合订阅（不认识的动作标为不完整，修复工作项取回）、按需补取、每小时对齐，组织换了纪元（整套恢复之后）时立即排一次对齐（`org_realign` 去重）；部门路径复制到单据上并随事件改写（`repath`） |
-| `sales/pricing.go` | 价格表与价格；`priceOf`（销售单位的价，否则基本单位的价乘系数） |
-| `sales/lines.go` | 报价与订单的行：输入的检查、取证、取价与金额（`buildLines`）、整份替换（`writeLines`） |
-| `sales/documents.go` | 报价与订单共用的部分：表头的取证与授权（`prepare`、`patchHead`）、部门（`departmentOf`）、单号（`number`）、读取 |
-| `sales/quotations.go` | 报价：新建、修改、读取、发出、取消、转订单草稿 |
-| `sales/orders.go` | 订单草稿：新建、读取、修改（确认中拒绝，RS09） |
-| `sales/confirmation.go` | 订单确认：过程的类型与读取、提交确认（取证、T1）、过程的查询 |
-| `sales/advance.go` | 过程的推进：`advance`（同步路径与恢复工作项共用）、`send`、`step`、`decide`（协议 04 的过程表）、`finish`、恢复工作项与死信；`setOrderState` 是订单状态的唯一写入处（确认、退回草稿、取消、完成的每条路径都经过它，订单事件与审计在这里写） |
-| `sales/cancel.go` | 取消订单；种类为 `cancel`、`release` 的过程（`startBranchProcess`） |
-| `sales/delivery.go` | 交货：T1 建交货、库存出库（交货身份即消耗身份）、T2 过账与可出账台账；恢复工作项 |
-| `sales/billing.go` | 出账来源（`BillingSourceService`）：台账、认领、续期、确认、正式化、释放、到期；订单完成；`OrderService.Read` |
-| `sales/lists.go` | 报价、订单、交货的列表 |
-| `sales/records.go` | 记录的类型、读取的 SQL、`emitOrder` |
-| `sales/migrations/` | 表 |
+| [`sales/`](sales/AGENTS.md) | 入口：组件定义与组装（路由、gRPC、订阅、后台工作、恢复核对都在这里登记，转给业务模块）；不写业务。`main.go` 与外壳只引用它 |
+| [`internal/`](internal/AGENTS.md) | 业务：下面的表里每个模块一个包；模块之间的依赖表在它的 `AGENTS.md`。Go 的 `internal` 让别的组件编译期就引用不了（决定 0101） |
+| [`itest/`](itest/AGENTS.md) | 集成测试，按业务流程分文件；它的 `AGENTS.md` 是测试索引（文件 → 流程 → 规则编号） |
+| `sales/migrations/` | 表，整个组件一套（迁移顺序是全组件的，不按模块拆） |
 | `cmd/seed/` | 种子：角色与三个销售账号的范围、价格表、各种状态的报价与订单（含确认被拒的反例）、交货（`make seed`） |
 | `contract/` | 本组件发布的契约，单独的模块：`contract/proto/`、`contract/events/`、`contract/openapi.yaml` |
-| `docs/` | 设计与细则 |
+| `docs/` | 设计与细则（规则的正文；各层的 `AGENTS.md` 只指过去，不抄） |
+
+业务模块（`internal/` 下）：
+
+| 模块 | 负责 | 拥有的表 |
+| --- | --- | --- |
+| [`quotations`](internal/quotations/AGENTS.md) | 报价：草稿、发出、取消、接受成订单草稿 | `quotation`、`quotation_line` |
+| [`orders`](internal/orders/AGENTS.md) | 订单草稿；订单状态的写入处（`SetOrderState`：确认、退回草稿、取消、完成都经过它）；已结束订单的冷热分层（协议 11） | `sales_order`、`order_line` |
+| [`confirmations`](internal/confirmations/AGENTS.md) | 订单的过程（协议 04）：确认、取消、完成时释放；过程的推进与恢复 | `confirmation`、`confirmation_branch` |
+| [`deliveries`](internal/deliveries/AGENTS.md) | 交货：建交货、库存出库、过账并增长可出账额度 | `delivery`、`delivery_line` |
+| [`billingsource`](internal/billingsource/AGENTS.md) | 出账来源（协议 05，给出账组件 erp/billing 的 gRPC）与订单读取 | `billing_claim`、`billing_claim_line` |
+| [`pricing`](internal/pricing/AGENTS.md) | 价格表；一行取哪个价（`PriceOf`） | `price_list`、`price_list_item` |
+| [`orgunits`](internal/orgunits/AGENTS.md) | 部门投影（协议 02）：部门路径复制到单据上 | `org_realign`（投影本身在 SDK 的表里） |
+| [`recoverycheck`](internal/recoverycheck/AGENTS.md) | 整套恢复后协议 04 的核对 | — |
+
+模块共用的（不属于某一个业务）：[`documents`](internal/documents/AGENTS.md)（报价与订单共用的表头、行的取价与金额、单号、列表）、[`ledger`](internal/ledger/AGENTS.md)（可出账台账的事件）、[`masterdata`](internal/masterdata/AGENTS.md)（事务外向主数据取证）、[`core`](internal/core/AGENTS.md)（名字、资源与操作的定义、错误与校验、记录类型）。
 
 | 想改 | 从这里开始 | 然后 |
 | --- | --- | --- |
-| 确认过程的状态与转换 | `docs/flows/confirmation.md` 与协议 04 的表 | `advance.go` 的 `decide`、`step`；集成测试的 `confirmations` 一步 |
-| 取价、行金额、税额 | `docs/rules/pricing.md` | `lines.go` 的 `buildLines`、`pricing.go` 的 `priceOf` |
-| 可出账额度怎样增长 | `docs/rules/pricing.md` 的“可出账金额” | `delivery.go` 的 `post`；服务明细在 `advance.go` 的 `finish` |
-| 认领的守卫 | `docs/flows/delivery-and-billing.md` 与协议 05 | `billing.go`；集成测试的 `billingSource` 一步 |
-| 订单状态变化时要做的事（发事件、通知意图、审计） | `advance.go` 的 `setOrderState` | 取消有三条路径（草稿取消在 `cancel.go`，确认中与已确认的取消在过程结束时），都汇到这里 |
-| 一个维度、一个操作 | `definition.go` | `docs/design.md` 的命令与查询、`BRICKKIT.md` 的契约索引 |
+| 确认过程的状态与转换 | `docs/flows/confirmation.md` 与协议 04 的表 | `internal/confirmations` 的 `decide`、`step`；`itest/confirmations_integration_test.go` |
+| 取价、行金额、税额 | `docs/rules/pricing.md` | `internal/documents/lines.go` 的 `BuildLines`、`internal/pricing` 的 `PriceOf`；`itest/quotations_integration_test.go` |
+| 可出账额度怎样增长 | `docs/rules/pricing.md` 的“可出账金额” | `internal/deliveries` 的 `post`；服务明细在 `internal/confirmations/advance.go` 的 `finish` |
+| 认领的守卫 | `docs/flows/delivery-and-billing.md` 与协议 05 | `internal/billingsource`；`itest/billingsource_integration_test.go` |
+| 订单状态变化时要做的事（发事件、审计） | `internal/orders` 的 `SetOrderState`（发 `erp.sales_order.changed.v1`、记审计；本组件不通知人，要通知的组件订阅这个事件） | 取消有三条路径（草稿取消在 `internal/confirmations/cancel.go`，确认中与已确认的取消在过程结束时），都汇到这里；只有进入“确认中”不经过它（在 `internal/confirmations` 提交确认的 T1 里写） |
+| 一个维度、一个操作、列表能筛选的字段 | `internal/core/names.go` | `docs/design.md` 的命令与查询、`BRICKKIT.md` 的契约索引；路由的登记在 `sales/module.go` |
 | 加字段、加接口、改事件 | 装配项目 be-assembly-standard 规范里的“改动配方” | `docs/design.md` 的数据与命令 |
 
 ## 构建与测试
 
-- `go test ./...`（`make test`）：清单的 `configSchema` 与 `events`、OpenAPI 与路由、事件载荷、合并安全。
-- `go test -tags integration ./sales/`（`make test-integration`）：真实的 PostgreSQL 与消息系统，例如 `BE_SDK_TEST_PG_ADMIN=postgres://postgres:<口令>@localhost:5432/brickkit_test_db`（口令是装配项目 `.env` 的 `POSTGRES_PASSWORD`）与 `BE_SDK_TEST_NATS_URL=nats://localhost:4222`；be-sdk-go 的 `sectest` 是测试部署；测试按步骤写在 `flows_integration_test.go`（取价与报价、确认、交货、出账来源、列表、部门、发件表），启动与辅助在 `sales_integration_test.go`；四个主数据组件与库存、信用是按契约写的替身（`standins_integration_test.go`），库存与信用的替身可以拒绝、丢一次应答、不可达、让暂存到期；测试以 `erp/billing` 的身份调出账来源，自己扮演 `mdm/org` 发部门事件。
-- 集成测试的前提：装配项目里 `make up` 起了 `be-postgres` 与 `be-nats`；`be-postgres` 里有库 `brickkit_test_db`（没有就 `docker exec be-postgres createdb -U postgres brickkit_test_db`）；测试每次开始时删掉再建自己的 schema `erp_sales_it`，跑完留着；端口 28084、9094 与替身的 19102–19107 要空着，被占时测试直接失败。
-- 授权视图是定期取的：测试中途加的授予要等下一次取到（集成测试用 `Eventually`）。
+- `go test ./...`（`make test`）：单元测试，在 `sales/contract_test.go`：清单的 `configSchema` 与 `events`、OpenAPI 与路由、事件载荷、合并安全。
+- `make test-integration`（`go test -tags integration ./itest/`）：真实的 PostgreSQL 与消息系统；每个文件测哪条流程、覆盖哪些规则、要什么前提，在 [itest/AGENTS.md](itest/AGENTS.md)。
 - `brickkit lint`
 
 ## 设计取舍
@@ -56,10 +57,10 @@
 
 ## 易错点
 
-- 不要在事务里调主数据、库存或信用：先取证（`upstream.go`），再开事务；过程推进的调用都在 `advance` 的事务之外。
+- 不要在事务里调主数据、库存或信用：先取证（`internal/masterdata`），再开事务；过程推进的调用都在 `advance` 的事务之外。
 - 不要换分支身份重发：结果未知时按同一身份查询或重发（参与方按分支身份幂等）。
-- 列表能排序、筛选的字段必须在资源定义的字段里声明（`definition.go` 的 `documentFields`），否则 SDK 答 `FIELD_NOT_QUERYABLE`。
-- 不要用浮点算金额与数量：乘法经 `times`（`apd`），比较与加减在 SQL 里做。
+- 列表能排序、筛选的字段必须在资源定义的字段里声明（`internal/core/names.go` 的 `Definitions()`，报价与订单共用 `DocumentFields`），否则 SDK 答 `FIELD_NOT_QUERYABLE`。
+- 不要用浮点算金额与数量：乘法经 `core.Times`（`apd`），比较与加减在 SQL 里做。
 
 ## 改代码前自查
 

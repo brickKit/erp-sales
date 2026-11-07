@@ -6,6 +6,8 @@ import (
 	"os"
 	"testing"
 
+	core "github.com/brickKit/erp-sales/v3/internal/core"
+
 	"github.com/brickKit/be-sdk-go/v3/httpx"
 	"github.com/brickKit/be-sdk-go/v3/launcher"
 	"github.com/brickKit/be-sdk-go/v3/mergesafety"
@@ -47,29 +49,29 @@ func TestThePayloadsFitTheirSchemas(t *testing.T) {
 	owner, dept := "01a15ab0-0000-7000-8000-0000000000e1", "01a15ab0-0000-7000-8000-0000000000e2"
 	at, item, tax := "2026-10-20T08:00:00.000000Z", "01a15ab0-0000-7000-8000-0000000000f1", "91310000MA1"
 	reason, batch, until := "insufficient_stock", "B2026-10", "2026-11-30"
-	line := QuoteLine{ID: "01a15ab0-0000-7000-8000-0000000000d1", LineNo: 1, Kind: "goods",
-		Product:  ProductSnap{ID: pr, Code: "P-1", Name: "螺丝", BaseUnit: "EA"},
+	line := core.QuoteLine{ID: "01a15ab0-0000-7000-8000-0000000000d1", LineNo: 1, Kind: "goods",
+		Product:  core.ProductSnap{ID: pr, Code: "P-1", Name: "螺丝", BaseUnit: "EA"},
 		Quantity: "2", Unit: "BX", ConversionFactor: "12", BaseQuantity: "24", UnitPrice: "120", PriceSource: "price_list",
 		PriceListItemID: &item, TaxRate: "0.13", TaxSource: "manual", Net: "240", Tax: "31.2"}
-	cust := Customer{PartnerID: "01a15ab0-0000-7000-8000-0000000000c9", Name: "上海客户", TaxID: &tax}
-	totals := Totals{Net: "240", Tax: "31.2", Gross: "271.2"}
+	cust := core.Customer{PartnerID: "01a15ab0-0000-7000-8000-0000000000c9", Name: "上海客户", TaxID: &tax}
+	totals := core.Totals{Net: "240", Tax: "31.2", Gross: "271.2"}
 	for typ, v := range map[string]any{
-		QuotationChanged: Quotation{ID: "01a15ab0-0000-7000-8000-0000000000aa", Number: "QT-SH-2026-000001",
+		core.QuotationChanged: core.Quotation{ID: "01a15ab0-0000-7000-8000-0000000000aa", Number: "QT-SH-2026-000001",
 			LegalEntityID: le, Customer: cust, Currency: "CNY", OwnerID: owner, DepartmentID: &dept, State: "sent",
-			ValidUntil: &until, Lines: []QuoteLine{line}, Totals: totals, Version: 2, CreatedAt: at, UpdatedAt: at},
-		OrderChanged: Order{ID: "01a15ab0-0000-7000-8000-0000000000ab", Number: "SO-SH-2026-000001", LegalEntityID: le,
+			ValidUntil: &until, Lines: []core.QuoteLine{line}, Totals: totals, Version: 2, CreatedAt: at, UpdatedAt: at},
+		core.OrderChanged: core.Order{ID: "01a15ab0-0000-7000-8000-0000000000ab", Number: "SO-SH-2026-000001", LegalEntityID: le,
 			Customer: cust, Currency: "USD", OwnerID: owner, State: "draft", BusinessDate: "2026-10-20",
-			ExchangeRate: &Rate{Rate: "7.1", Date: "2026-10-20", Type: "spot", RecordID: item, RecordVersion: 1},
-			Reason:       &reason, Lines: []OrderLine{{QuoteLine: line, WarehouseID: &wh, Delivered: "0",
-				Billable: Measure{"0", "0"}, Claimed: Measure{"0", "0"}, Billed: Measure{"0", "0"}}},
+			ExchangeRate: &core.Rate{Rate: "7.1", Date: "2026-10-20", Type: "spot", RecordID: item, RecordVersion: 1},
+			Reason:       &reason, Lines: []core.OrderLine{{QuoteLine: line, WarehouseID: &wh, Delivered: "0",
+				Billable: core.Measure{Quantity: "0", Amount: "0"}, Claimed: core.Measure{Quantity: "0", Amount: "0"}, Billed: core.Measure{Quantity: "0", Amount: "0"}}},
 			Totals: totals, Version: 3, CreatedAt: at, UpdatedAt: at},
-		DeliveryChanged: Delivery{ID: "01a15ab0-0000-7000-8000-0000000000ac", Number: "DN-SH-2026-000001",
+		core.DeliveryChanged: core.Delivery{ID: "01a15ab0-0000-7000-8000-0000000000ac", Number: "DN-SH-2026-000001",
 			OrderID: "01a15ab0-0000-7000-8000-0000000000ab", LegalEntityID: le, State: "posted", BusinessDate: "2026-10-21",
-			Lines: []DeliveryLine{{OrderLineID: line.ID, ProductID: pr, WarehouseID: wh, Quantity: "1", BaseQuantity: "12",
+			Lines: []core.DeliveryLine{{OrderLineID: line.ID, ProductID: pr, WarehouseID: wh, Quantity: "1", BaseQuantity: "12",
 				Batch: &batch, Serials: []string{}}}, OwnerID: owner, Version: 2, CreatedAt: at, UpdatedAt: at},
-		PriceListChanged: PriceList{ID: item, LegalEntityID: le, Currency: "CNY", Code: "STD", Name: "标准价", State: "active",
+		core.PriceListChanged: core.PriceList{ID: item, LegalEntityID: le, Currency: "CNY", Code: "STD", Name: "标准价", State: "active",
 			Version: 1, UpdatedAt: at},
-		PriceListItemChange: PriceListItem{ID: item, PriceListID: item, ProductID: pr, Unit: "EA", Price: "10.5",
+		core.PriceListItemChange: core.PriceListItem{ID: item, PriceListID: item, ProductID: pr, Unit: "EA", Price: "10.5",
 			ValidFrom: "2026-10-01", ValidTo: &until, Version: 1, UpdatedAt: at},
 	} {
 		validate(t, typ, v)

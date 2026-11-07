@@ -4,7 +4,7 @@
 
 ## 单价
 
-按顺序取第一个成立的（`lines.go` 的 `buildLines`、`pricing.go` 的 `priceOf`）：
+按顺序取第一个成立的（`internal/documents/lines.go` 的 `BuildLines` 走这个顺序并报 `NO_PRICE`；第 3、4 步是 `internal/pricing/pricing.go` 的 `PriceOf`）：
 
 | 顺序 | 情形 | 单价 |
 | --- | --- | --- |

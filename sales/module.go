@@ -2,70 +2,41 @@ package sales
 
 import (
 	"context"
-	"regexp"
-	"strconv"
 	"time"
 
-	"github.com/brickKit/be-sdk-go/v3/audit"
-	sdkauthz "github.com/brickKit/be-sdk-go/v3/authz"
+	billingsource "github.com/brickKit/erp-sales/v3/internal/billingsource"
+	pricing "github.com/brickKit/erp-sales/v3/internal/pricing"
+
+	confirmations "github.com/brickKit/erp-sales/v3/internal/confirmations"
+	core "github.com/brickKit/erp-sales/v3/internal/core"
+	deliveries "github.com/brickKit/erp-sales/v3/internal/deliveries"
+	orders "github.com/brickKit/erp-sales/v3/internal/orders"
+	orgunits "github.com/brickKit/erp-sales/v3/internal/orgunits"
+	quotations "github.com/brickKit/erp-sales/v3/internal/quotations"
+
 	"github.com/brickKit/be-sdk-go/v3/db"
 	"github.com/brickKit/be-sdk-go/v3/errs"
 	"github.com/brickKit/be-sdk-go/v3/events"
 	"github.com/brickKit/be-sdk-go/v3/grpcx"
 	"github.com/brickKit/be-sdk-go/v3/httpx"
-	"github.com/brickKit/be-sdk-go/v3/identity"
-	"github.com/brickKit/be-sdk-go/v3/money"
 	"github.com/brickKit/be-sdk-go/v3/runtime"
 	"github.com/brickKit/be-sdk-go/v3/work"
 	salesv3 "github.com/brickKit/erp-sales/contract/v3/gen/go/be/erp/sales/v3"
 )
 
-// The component's own reasons (the SDK's catalog has the shared ones).
-var (
-	errVersion = errs.Define(ID, "VERSION_CONFLICT", errs.Aborted, 409, errs.RetryNo, "The record changed since that version")
-	errState   = errs.Define(ID, "STATE_CONFLICT", errs.FailedPrecondition, 409, errs.RetryNo,
-		"The record's state does not allow this")
-	errLegalEntity = errs.Define(ID, "LEGAL_ENTITY_NOT_USABLE", errs.FailedPrecondition, 409, errs.RetryNo,
-		"The legal entity does not exist or is not active")
-	errIneligible = errs.Define(ID, "NOT_ELIGIBLE", errs.FailedPrecondition, 409, errs.RetryNo,
-		"A customer or product may not be used for a sale in this legal entity now")
-	errDepartment = errs.Define(ID, "DEPARTMENT_NOT_USABLE", errs.FailedPrecondition, 409, errs.RetryNo,
-		"The department does not exist, is retired or belongs to another legal entity")
-	errCurrency = errs.Define(ID, "CURRENCY_NOT_USABLE", errs.FailedPrecondition, 409, errs.RetryNo,
-		"The currency does not exist or is not active")
-	errNoRate = errs.Define(ID, "NO_EXCHANGE_RATE", errs.FailedPrecondition, 409, errs.RetryNo,
-		"No spot rate to the legal entity's base currency on the business date")
-	errNoPrice = errs.Define(ID, "NO_PRICE", errs.FailedPrecondition, 409, errs.RetryNo,
-		"No price for the product: enter the unit price")
-	errUnit = errs.Define(ID, "NO_CONVERSION", errs.FailedPrecondition, 409, errs.RetryNo,
-		"The unit does not convert to the product's base unit")
-	errCode = errs.Define(ID, "CODE_TAKEN", errs.AlreadyExists, 409, errs.RetryNo, "The code is taken")
-	// the billing source (protocol 05)
-	errContent = errs.Define(ID, "CONTENT_CONFLICT", errs.AlreadyExists, 409, errs.RetryNo,
-		"The ID was used before with other content")
-	errClaim = errs.Define(ID, "CLAIM_STATE", errs.FailedPrecondition, 409, errs.RetryNo,
-		"The claim's state does not allow this")
-)
-
-var (
-	uuidForm     = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-	currencyForm = regexp.MustCompile(`^[A-Z]{3}$`)
-	dateForm     = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
-	codeForm     = regexp.MustCompile(`^[A-Z0-9][A-Z0-9_-]{0,31}$`)
-)
-
-// Module is the sales component.
+// Module is the sales component as the launcher and the shells run it: it only assembles the business modules under
+// internal/ (their map is internal/AGENTS.md); the gRPC services answer through them (services.go).
 type Module struct {
 	salesv3.UnimplementedBillingSourceServiceServer
 	salesv3.UnimplementedOrderServiceServer
-	rt *runtime.Runtime
+	b *core.Base
 }
 
 // New builds the module from its runtime.
 func New(rt *runtime.Runtime) (*Module, error) {
-	m := &Module{rt: rt}
+	m := &Module{b: &core.Base{RT: rt}}
 	if rt.Tiering != nil { // the orders' history, archived ones included (assembly protocol 11)
-		if err := rt.Tiering.Register(OrderClass, m.reader()); err != nil {
+		if err := rt.Tiering.Register(orders.OrderClass, orders.Reader(m.b)); err != nil {
 			return nil, err
 		}
 	}
@@ -77,62 +48,50 @@ func (m *Module) Routes(r *httpx.Routes) error {
 	add := func(method, path, op string, h httpx.Handler) {
 		r.Add(httpx.Route{Method: method, Path: path, Operation: op, Handle: h})
 	}
-	add("GET", "/api/sales/quotations", OpQuoteRead, m.listQuotations)
-	add("POST", "/api/sales/quotations", OpQuoteEdit, m.createQuotation)
-	add("GET", "/api/sales/quotations/:id", OpQuoteRead, m.getQuotation)
-	add("PATCH", "/api/sales/quotations/:id", OpQuoteEdit, m.updateQuotation)
-	add("POST", "/api/sales/quotations/:id/send", OpQuoteEdit, m.quotationAction("send"))
-	add("POST", "/api/sales/quotations/:id/cancel", OpQuoteEdit, m.quotationAction("cancel"))
-	add("POST", "/api/sales/quotations/:id/accept", OpQuoteEdit, m.acceptQuotation)
-	add("GET", "/api/sales/orders", OpOrderRead, m.listOrders)
-	add("POST", "/api/sales/orders", OpOrderEdit, m.createOrder)
-	add("GET", "/api/sales/orders/:id", OpOrderRead, m.getOrder)
-	add("PATCH", "/api/sales/orders/:id", OpOrderEdit, m.updateOrder)
-	r.Add(httpx.Route{Method: "POST", Path: "/api/sales/orders/:id/confirm", Operation: OpOrderConfirm,
-		Orchestration: true, Handle: m.confirmOrder})
-	add("GET", "/api/sales/orders/:id/confirmations/:confirmation_id", OpOrderRead, m.getConfirmation)
-	r.Add(httpx.Route{Method: "POST", Path: "/api/sales/orders/:id/cancel", Operation: OpOrderCancel,
-		Orchestration: true, Handle: m.cancelOrder})
-	add("GET", "/api/sales/deliveries", OpDeliveryRead, m.listDeliveries)
-	r.Add(httpx.Route{Method: "POST", Path: "/api/sales/deliveries", Operation: OpDeliveryCreate,
-		Orchestration: true, Handle: m.createDelivery})
-	add("GET", "/api/sales/deliveries/:id", OpDeliveryRead, m.getDelivery)
-	add("GET", "/api/sales/price-lists", OpPriceRead, m.listPriceLists)
-	add("POST", "/api/sales/price-lists", OpPriceManage, m.createPriceList)
-	add("GET", "/api/sales/price-lists/:id", OpPriceRead, m.getPriceList)
-	add("PATCH", "/api/sales/price-lists/:id", OpPriceManage, m.updatePriceList)
-	add("GET", "/api/sales/price-lists/:id/items", OpPriceRead, m.listPrices)
-	add("POST", "/api/sales/price-lists/:id/items", OpPriceManage, m.setPrice)
+	h := m.handler
+	add("GET", "/api/sales/quotations", core.OpQuoteRead, h(quotations.ListQuotations))
+	add("POST", "/api/sales/quotations", core.OpQuoteEdit, h(quotations.CreateQuotation))
+	add("GET", "/api/sales/quotations/:id", core.OpQuoteRead, h(quotations.GetQuotation))
+	add("PATCH", "/api/sales/quotations/:id", core.OpQuoteEdit, h(quotations.UpdateQuotation))
+	add("POST", "/api/sales/quotations/:id/send", core.OpQuoteEdit, quotations.QuotationAction(m.b, "send"))
+	add("POST", "/api/sales/quotations/:id/cancel", core.OpQuoteEdit, quotations.QuotationAction(m.b, "cancel"))
+	add("POST", "/api/sales/quotations/:id/accept", core.OpQuoteEdit, h(quotations.AcceptQuotation))
+	add("GET", "/api/sales/orders", core.OpOrderRead, h(orders.ListOrders))
+	add("POST", "/api/sales/orders", core.OpOrderEdit, h(orders.CreateOrder))
+	add("GET", "/api/sales/orders/:id", core.OpOrderRead, h(orders.GetOrder))
+	add("PATCH", "/api/sales/orders/:id", core.OpOrderEdit, h(orders.UpdateOrder))
+	r.Add(httpx.Route{Method: "POST", Path: "/api/sales/orders/:id/confirm", Operation: core.OpOrderConfirm,
+		Orchestration: true, Handle: h(confirmations.ConfirmOrder)})
+	add("GET", "/api/sales/orders/:id/confirmations/:confirmation_id", core.OpOrderRead, h(confirmations.GetConfirmation))
+	r.Add(httpx.Route{Method: "POST", Path: "/api/sales/orders/:id/cancel", Operation: core.OpOrderCancel,
+		Orchestration: true, Handle: h(confirmations.CancelOrder)})
+	add("GET", "/api/sales/deliveries", core.OpDeliveryRead, h(deliveries.ListDeliveries))
+	r.Add(httpx.Route{Method: "POST", Path: "/api/sales/deliveries", Operation: core.OpDeliveryCreate,
+		Orchestration: true, Handle: h(deliveries.CreateDelivery)})
+	add("GET", "/api/sales/deliveries/:id", core.OpDeliveryRead, h(deliveries.GetDelivery))
+	add("GET", "/api/sales/price-lists", core.OpPriceRead, h(pricing.ListPriceLists))
+	add("POST", "/api/sales/price-lists", core.OpPriceManage, h(pricing.CreatePriceList))
+	add("GET", "/api/sales/price-lists/:id", core.OpPriceRead, h(pricing.GetPriceList))
+	add("PATCH", "/api/sales/price-lists/:id", core.OpPriceManage, h(pricing.UpdatePriceList))
+	add("GET", "/api/sales/price-lists/:id/items", core.OpPriceRead, h(pricing.ListPrices))
+	add("POST", "/api/sales/price-lists/:id/items", core.OpPriceManage, h(pricing.SetPrice))
 	// in the contract, not in this version (D75)
-	add("POST", "/api/sales/orders/:id/close", OpOrderCancel, m.unsupportedOnOrder("closing what is not delivered"))
-	add("POST", "/api/sales/orders/:id/revisions", OpOrderEdit, m.unsupportedOnOrder("revisions"))
-	add("POST", "/api/sales/returns", OpReturnEdit, func(c *httpx.Context) error {
+	add("POST", "/api/sales/orders/:id/close", core.OpOrderCancel, orders.UnsupportedOnOrder(m.b, "closing what is not delivered"))
+	add("POST", "/api/sales/orders/:id/revisions", core.OpOrderEdit, orders.UnsupportedOnOrder(m.b, "revisions"))
+	add("POST", "/api/sales/returns", core.OpReturnEdit, func(c *httpx.Context) error {
 		return errs.New(errs.ReasonCapabilityUnsupported, "returns, allowances and exchanges are not in this version of erp/sales")
 	})
 	return nil
 }
 
-func (m *Module) unsupportedOnOrder(what string) httpx.Handler {
-	return func(c *httpx.Context) error {
-		o, err := m.order(c.Ctx(), c.Param("id"))
-		if err != nil {
-			return err
-		}
-		if _, _, err := check(c, c.Operation(), docFacts(o.LegalEntityID, o.DepartmentPath, o.OwnerID)); err != nil {
-			return err
-		}
-		return errs.New(errs.ReasonCapabilityUnsupported, what+" is not in this version of erp/sales")
-	}
-}
-
 // Services registers the system surface: the billing source for erp/billing, the order read for any component.
 func (m *Module) Services(s *grpcx.Services) error {
-	billing := grpcx.Method{Operation: OpSysBilling, Callers: []string{Billing}}
+	billing := grpcx.Method{Operation: core.OpSysBilling, Callers: []string{core.Billing}}
 	s.Register(&salesv3.BillingSourceService_ServiceDesc, m, map[string]grpcx.Method{
 		"Ledger": billing, "Claim": billing, "Renew": billing, "Confirm": billing, "Formalize": billing,
 		"Release": billing, "Reverse": billing})
 	s.Register(&salesv3.OrderService_ServiceDesc, m, map[string]grpcx.Method{
-		"Read": {Operation: OpSysRead, Callers: []string{grpcx.AnyComponent}}})
+		"Read": {Operation: core.OpSysRead, Callers: []string{grpcx.AnyComponent}}})
 	return nil
 }
 
@@ -140,76 +99,45 @@ func (m *Module) Services(s *grpcx.Services) error {
 // event under a new name in 3.0.16: an existing durable subscription keeps its settings (protocol P6.18), so the old
 // name would have kept the old type filter, and a version still running during an upgrade keeps its own.
 func (m *Module) Subscriptions(s *events.Subscriptions) error {
-	s.Add(events.Sub{Name: "org-unit-events", Streams: []string{OrgStream}, Types: []string{OrgUnitEvents},
-		Handle: m.onOrgUnit})
+	s.Add(events.Sub{Name: "org-unit-events", Streams: []string{core.OrgStream}, Types: []string{core.OrgUnitEvents},
+		Handle: m.received(orgunits.OnOrgUnit)})
 	return nil
 }
 
 // Jobs declares the background work (protocol 01).
 func (m *Module) Jobs(j *work.Jobs) error {
-	j.Add(work.Job{Name: jobAdvance, Kind: work.Queue, Effect: work.IdempotentExternal, Handle: m.advanceJob,
-		DeadLetter: m.advanceDead})
+	j.Add(work.Job{Name: confirmations.JobAdvance, Kind: work.Queue, Effect: work.IdempotentExternal, Handle: m.job(confirmations.AdvanceJob),
+		DeadLetter: m.dead(confirmations.AdvanceDead)})
 	// an issue is retried until the inventory answers: only it knows whether the goods left
-	j.Add(work.Job{Name: jobIssue, Kind: work.Queue, Effect: work.IdempotentExternal, MaxAttempts: work.Unlimited,
-		Handle: m.issueJob})
+	j.Add(work.Job{Name: deliveries.JobIssue, Kind: work.Queue, Effect: work.IdempotentExternal, MaxAttempts: work.Unlimited,
+		Handle: m.job(deliveries.IssueJob)})
 	j.Add(work.Job{Name: "expire-claims", Kind: work.Singleton, Effect: work.Local, Interval: time.Minute,
-		MaxAttempts: work.Unlimited, Handle: m.expireClaims})
+		MaxAttempts: work.Unlimited, Handle: m.job(billingsource.ExpireClaims)})
 	j.Add(work.Job{Name: "align-org-units", Kind: work.Singleton, Effect: work.Local, Interval: time.Hour,
-		MaxAttempts: work.Unlimited, Handle: m.alignOrgUnits})
-	j.Add(work.Job{Name: jobRepairOrgUnits, Kind: work.Queue, Effect: work.IdempotentExternal,
-		MaxAttempts: work.Unlimited, Handle: m.repairOrgUnits})
-	j.Add(work.Job{Name: jobRealignOrgUnits, Kind: work.Queue, Effect: work.IdempotentExternal,
-		MaxAttempts: work.Unlimited, Handle: m.realignOrgUnits})
+		MaxAttempts: work.Unlimited, Handle: m.job(orgunits.AlignOrgUnits)})
+	j.Add(work.Job{Name: orgunits.JobRepairOrgUnits, Kind: work.Queue, Effect: work.IdempotentExternal,
+		MaxAttempts: work.Unlimited, Handle: m.job(orgunits.RepairOrgUnits)})
+	j.Add(work.Job{Name: orgunits.JobRealignOrgUnits, Kind: work.Queue, Effect: work.IdempotentExternal,
+		MaxAttempts: work.Unlimited, Handle: m.job(orgunits.RealignOrgUnits)})
 	return nil
 }
 
-// docFacts are the facts of one document's three dimensions; a document without a department has none (security
-// 07: no department never matches a tree, it never widens to the whole organization).
-func docFacts(legalEntity string, departmentPath *string, owner string) sdkauthz.Facts {
-	dept := sdkauthz.Null
-	if departmentPath != nil {
-		dept = sdkauthz.Value(*departmentPath)
+// handler, job, dead and received adapt a module's function, which takes the shared base first, to what the SDK
+// registers.
+func (m *Module) handler(f func(*core.Base, *httpx.Context) error) httpx.Handler {
+	return func(c *httpx.Context) error { return f(m.b, c) }
+}
+
+func (m *Module) job(f func(*core.Base, context.Context, *work.Run) error) func(context.Context, *work.Run) error {
+	return func(ctx context.Context, r *work.Run) error { return f(m.b, ctx, r) }
+}
+
+func (m *Module) dead(f func(*core.Base, context.Context, db.Tx, work.Item, error) error) func(context.Context, db.Tx, work.Item, error) error {
+	return func(ctx context.Context, tx db.Tx, item work.Item, err error) error {
+		return f(m.b, ctx, tx, item, err)
 	}
-	return sdkauthz.Facts{DimLegalEntity: sdkauthz.Value(legalEntity), DimDepartment: dept, DimOwner: sdkauthz.Value(owner)}
 }
 
-// check decides op on a record with the given facts and returns the context to work in and the acting principal.
-func check(c *httpx.Context, op string, facts sdkauthz.Facts) (context.Context, string, error) {
-	s, _ := sdkauthz.From(c.Ctx())
-	ctx, _, err := s.Check(c.Ctx(), op, facts)
-	if err != nil {
-		return ctx, "", err
-	}
-	u, _ := identity.UserFrom(ctx)
-	return ctx, u.Subject, nil
-}
-
-func invalid(field, why string) error {
-	return errs.New(errs.ReasonRequestInvalid, why).WithViolations(errs.Violation{Field: field, Reason: "INVALID", Description: why})
-}
-
-func notFound(what string) error { return errs.New(errs.ReasonNotFound, what+" not found") }
-
-// decimal checks a non-negative decimal string of at most scale places and returns its canonical form.
-func decimal(field, v string, scale int32, positive bool) (string, error) {
-	d, err := money.Parse(v)
-	if err != nil || d.Sign() < 0 || positive && d.Sign() == 0 || -d.Exponent > scale {
-		return "", invalid(field, field+" is a decimal string with at most "+strconv.Itoa(int(scale))+" places")
-	}
-	d.Reduce(d)
-	return d.Text('f'), nil
-}
-
-// change records the business change with the record's new state (protocol 03), in the transaction that made it.
-func (m *Module) change(ctx context.Context, tx db.Tx, actor, op, typ, id string, after any) error {
-	_, err := m.rt.Audit.Write(ctx, tx, audit.Record{Category: audit.BusinessChange, Operation: op, Outcome: audit.Succeeded,
-		Actor: actor, Target: audit.TargetOf(typ, id, after), Changes: map[string]any{"after": after}})
-	return err
-}
-
-// emit writes an event into the outbox, in the transaction that changed the record (protocol 02, S2).
-func (m *Module) emit(ctx context.Context, tx db.Tx, typ, id string, version int64, legalEntity string, data any) error {
-	_, err := m.rt.Events.Emit(ctx, tx, Stream, events.Event{Type: typ, RecordID: id, Version: version,
-		Projection: events.Full, LegalEntity: legalEntity, Data: data})
-	return err
+func (m *Module) received(f func(*core.Base, context.Context, db.Tx, events.Received) error) func(context.Context, db.Tx, events.Received) error {
+	return func(ctx context.Context, tx db.Tx, e events.Received) error { return f(m.b, ctx, tx, e) }
 }
