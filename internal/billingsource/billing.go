@@ -154,20 +154,16 @@ func giveBack(m *core.Base, ctx context.Context, tx db.Tx, c claimRow, state, ca
 	if err := tx.QueryRow(ctx, `SELECT legal_entity_id::text FROM sales_order WHERE id = $1`, c.OrderID).Scan(&legalEntity); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE order_line l SET claimed_qty = l.claimed_qty - cl.quantity,
-		claimed_amt = l.claimed_amt - cl.amount FROM billing_claim_line cl WHERE cl.claim_id = $1 AND cl.order_line_id = l.id`,
-		c.ID); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE billing_claim SET state = $2, expires_at = NULL, updated_at = now() WHERE id = $1`,
-		c.ID, state); err != nil {
-		return err
-	}
 	lines := make([]string, len(c.Lines))
 	for i, l := range c.Lines {
 		lines[i] = l.OrderLineId
 	}
-	return ledger.LedgerFacts(m, ctx, tx, c.OrderID, legalEntity, lines, cause)
+	if err := ledger.GiveBack(m, ctx, tx, c.OrderID, legalEntity, c.ID, lines, cause); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `UPDATE billing_claim SET state = $2, expires_at = NULL, updated_at = now() WHERE id = $1`,
+		c.ID, state)
+	return err
 }
 
 // Ledger answers an order's billable ledger.
@@ -258,21 +254,16 @@ func Claim(m *core.Base, ctx context.Context, in *salesv3.ClaimRequest) (*salesv
 			core.ClaimPeriod.Seconds()); err != nil {
 			return err
 		}
-		ids := make([]string, len(lines))
+		moves := make([]ledger.Move, len(lines))
 		for i, l := range lines {
-			ids[i] = l.OrderLineId
+			moves[i] = ledger.Move{Line: l.OrderLineId, Quantity: l.Measure.Quantity, Amount: l.Measure.Amount}
 			if _, err := tx.Exec(ctx, `INSERT INTO billing_claim_line (claim_id, order_line_id, quantity, amount)
 				VALUES ($1, $2, $3::numeric, $4::numeric)`, in.GetClaimId(), l.OrderLineId, l.Measure.Quantity,
 				l.Measure.Amount); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `UPDATE order_line SET claimed_qty = claimed_qty + $2::numeric,
-				claimed_amt = claimed_amt + $3::numeric WHERE id = $1`, l.OrderLineId, l.Measure.Quantity,
-				l.Measure.Amount); err != nil {
-				return err
-			}
 		}
-		if err := ledger.LedgerFacts(m, ctx, tx, o.ID, o.LegalEntityID, ids, "claim"); err != nil {
+		if err := ledger.Claim(m, ctx, tx, o.ID, o.LegalEntityID, moves); err != nil {
 			return err
 		}
 		c, err := getClaim(ctx, tx, in.GetClaimId(), false)
@@ -369,20 +360,18 @@ func Formalize(m *core.Base, ctx context.Context, in *salesv3.FormalizeRequest) 
 				return core.Invalid("billed", "line "+b.OrderLineId+" bills more than it claimed")
 			}
 		}
-		for _, l := range c.Lines {
+		gone, came := make([]ledger.Move, len(c.Lines)), make([]ledger.Move, len(c.Lines))
+		for i, l := range c.Lines {
 			q, a := "0", "0"
 			for _, b := range billed {
 				if b.OrderLineId == l.OrderLineId {
 					q, a = b.Measure.Quantity, b.Measure.Amount
 				}
 			}
+			gone[i] = ledger.Move{Line: l.OrderLineId, Quantity: l.Measure.Quantity, Amount: l.Measure.Amount}
+			came[i] = ledger.Move{Line: l.OrderLineId, Quantity: q, Amount: a}
 			if _, err := tx.Exec(ctx, `UPDATE billing_claim_line SET billed_qty = $3::numeric, billed_amt = $4::numeric
 				WHERE claim_id = $1 AND order_line_id = $2`, c.ID, l.OrderLineId, q, a); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `UPDATE order_line SET claimed_qty = claimed_qty - $2::numeric,
-				claimed_amt = claimed_amt - $3::numeric, billed_qty = billed_qty + $4::numeric, billed_amt = billed_amt + $5::numeric
-				WHERE id = $1`, l.OrderLineId, l.Measure.Quantity, l.Measure.Amount, q, a); err != nil {
 				return err
 			}
 		}
@@ -393,11 +382,7 @@ func Formalize(m *core.Base, ctx context.Context, in *salesv3.FormalizeRequest) 
 		if err != nil {
 			return err
 		}
-		lines := make([]string, len(c.Lines))
-		for i, l := range c.Lines {
-			lines[i] = l.OrderLineId
-		}
-		if err := ledger.LedgerFacts(m, ctx, tx, o.ID, o.LegalEntityID, lines, "formalize"); err != nil {
+		if err := ledger.Bill(m, ctx, tx, o.ID, o.LegalEntityID, gone, came); err != nil {
 			return err
 		}
 		if err := completeIfDone(m, ctx, tx, o.ID, caller(ctx)); err != nil {

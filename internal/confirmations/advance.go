@@ -363,22 +363,7 @@ func finish(m *core.Base, ctx context.Context, tx db.Tx, p process) error {
 	}
 	switch ended {
 	case orders.ConfirmationConfirmed:
-		lines, err := tx.Query(ctx, `UPDATE order_line SET billable_qty = quantity, billable_amt = net
-			WHERE order_id = $1 AND kind = 'service' RETURNING id::text`, o.ID)
-		if err != nil {
-			return err
-		}
-		var service []string
-		for lines.Next() {
-			var id string
-			if err := lines.Scan(&id); err != nil {
-				lines.Close()
-				return err
-			}
-			service = append(service, id)
-		}
-		lines.Close()
-		if err := ledger.LedgerFacts(m, ctx, tx, o.ID, o.LegalEntityID, service, "service_confirmed"); err != nil {
+		if err := ledger.ServiceConfirmed(m, ctx, tx, o.ID, o.LegalEntityID); err != nil {
 			return err
 		}
 		if err := orders.Transition(m, ctx, tx, o, d, orders.Set{}, p.Actor); err != nil {

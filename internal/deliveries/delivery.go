@@ -290,24 +290,6 @@ func post(m *core.Base, ctx context.Context, id string, scale int32) error {
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}
-		rows, err := tx.Query(ctx, `UPDATE order_line l SET delivered = l.delivered + dl.quantity,
-			billable_qty = l.billable_qty + dl.quantity,
-			billable_amt = CASE WHEN l.delivered + dl.quantity = l.quantity THEN l.net
-				ELSE l.billable_amt + round(l.net * dl.quantity / l.quantity, $2) END
-			FROM delivery_line dl WHERE dl.delivery_id = $1 AND dl.order_line_id = l.id RETURNING l.id::text`, id, scale)
-		if err != nil {
-			return err
-		}
-		var changed []string
-		for rows.Next() {
-			var l string
-			if err := rows.Scan(&l); err != nil {
-				rows.Close()
-				return err
-			}
-			changed = append(changed, l)
-		}
-		rows.Close()
 		d, err := emitDelivery(m, ctx, tx, id)
 		if err != nil {
 			return err
@@ -317,7 +299,8 @@ func post(m *core.Base, ctx context.Context, id string, scale int32) error {
 			"occurred_at": canon.Time(time.Now())}); err != nil {
 			return err
 		}
-		if err := ledger.LedgerFacts(m, ctx, tx, d.OrderID, d.LegalEntityID, changed, "delivery"); err != nil {
+		// after the delivery's events, as the outbox always had them; the delivery's rows do not read the ledger
+		if err := ledger.Deliver(m, ctx, tx, d.OrderID, d.LegalEntityID, d.ID, scale); err != nil {
 			return err
 		}
 		_, err = core.EmitOrder(m, ctx, tx, d.OrderID)
