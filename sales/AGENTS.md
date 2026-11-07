@@ -16,6 +16,7 @@
 | `services.go` | gRPC 方法（`BillingSourceService`、`OrderService.Read`）转给 `billingsource`；`Tiering` 转给 `orders` |
 | `checks.go` | 整套恢复的核对（线协议第 14 章）：四种对象按版本答“还在不在”；协议 04 的检查转给 `recoverycheck` |
 | `contract_test.go` | 单元测试：清单的 `configSchema` 与 `events`、OpenAPI 与路由一一对应、事件载荷合乎 schema、合并安全 |
+| `structure_test.go` | 单元测试，按类型检查 `internal/`：`orders` 以外不读订单状态、不写 `sales_order.state`；`ledger` 以外不写台账列；别处读订单状态的登记在 `orderStateReaders`（文件与函数、用途） |
 | `migrations/` | 表，整个组件一套 |
 
 ## 依赖与被依赖
@@ -31,4 +32,4 @@
 
 ## 测试
 
-`go test ./sales/`；单元测试只在这里，所以与 `make test`（`go vet ./... && go test ./...`）跑的是同一批。
+`go test ./sales/`；`make test`（`go vet ./... && go test ./...`）另外跑 `internal/orders` 的生命周期测试。

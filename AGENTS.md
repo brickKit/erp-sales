@@ -21,7 +21,7 @@
 | 模块 | 负责 | 拥有的表 |
 | --- | --- | --- |
 | [`quotations`](internal/quotations/AGENTS.md) | 报价：草稿、发出、取消、接受成订单草稿 | `quotation`、`quotation_line` |
-| [`orders`](internal/orders/AGENTS.md) | 订单草稿；订单状态的写入处（`SetOrderState`：确认、退回草稿、取消、完成都经过它）；已结束订单的冷热分层（协议 11） | `sales_order`、`order_line` |
+| [`orders`](internal/orders/AGENTS.md) | 订单草稿；**订单的生命周期**：一张表定每个阶段能做什么、状态怎样变，状态唯一的写入（`Transition`）；已结束订单的冷热分层（协议 11） | `sales_order`、`order_line` |
 | [`confirmations`](internal/confirmations/AGENTS.md) | 订单的过程（协议 04）：确认、取消、完成时释放；过程的推进与恢复 | `confirmation`、`confirmation_branch` |
 | [`deliveries`](internal/deliveries/AGENTS.md) | 交货：建交货、库存出库、过账并增长可出账额度 | `delivery`、`delivery_line` |
 | [`billingsource`](internal/billingsource/AGENTS.md) | 出账来源（协议 05，给出账组件 erp/billing 的 gRPC）与订单读取 | `billing_claim`、`billing_claim_line` |
@@ -29,15 +29,16 @@
 | [`orgunits`](internal/orgunits/AGENTS.md) | 部门投影（协议 02）：部门路径复制到单据上 | `org_realign`（投影本身在 SDK 的表里） |
 | [`recoverycheck`](internal/recoverycheck/AGENTS.md) | 整套恢复后协议 04 的核对 | — |
 
-模块共用的（不属于某一个业务）：[`documents`](internal/documents/AGENTS.md)（报价与订单共用的表头、行的取价与金额、单号、列表）、[`ledger`](internal/ledger/AGENTS.md)（可出账台账的事件）、[`masterdata`](internal/masterdata/AGENTS.md)（事务外向主数据取证）、[`core`](internal/core/AGENTS.md)（名字、资源与操作的定义、错误与校验、记录类型）。
+模块共用的（不属于某一个业务）：[`documents`](internal/documents/AGENTS.md)（报价与订单共用的表头、行的取价与金额、单号、列表）、[`ledger`](internal/ledger/AGENTS.md)（可出账台账：订单行台账列唯一的写入与它的事件）、[`masterdata`](internal/masterdata/AGENTS.md)（事务外向主数据取证）、[`core`](internal/core/AGENTS.md)（名字、资源与操作的定义、错误与校验、记录类型）。
 
 | 想改 | 从这里开始 | 然后 |
 | --- | --- | --- |
 | 确认过程的状态与转换 | `docs/flows/confirmation.md` 与协议 04 的表 | `internal/confirmations` 的 `decide`、`step`；`itest/confirmations_integration_test.go` |
 | 取价、行金额、税额 | `docs/rules/pricing.md` | `internal/documents/lines.go` 的 `BuildLines`、`internal/pricing` 的 `PriceOf`；`itest/quotations_integration_test.go` |
-| 可出账额度怎样增长 | `docs/rules/pricing.md` 的“可出账金额” | `internal/deliveries` 的 `post`；服务明细在 `internal/confirmations/advance.go` 的 `finish` |
 | 认领的守卫 | `docs/flows/delivery-and-billing.md` 与协议 05 | `internal/billingsource`；`itest/billingsource_integration_test.go` |
-| 订单状态变化时要做的事（发事件、审计） | `internal/orders` 的 `SetOrderState`（发 `erp.sales_order.changed.v1`、记审计；本组件不通知人，要通知的组件订阅这个事件） | 取消有三条路径（草稿取消在 `internal/confirmations/cancel.go`，确认中与已确认的取消在过程结束时），都汇到这里；只有进入“确认中”不经过它（在 `internal/confirmations` 提交确认的 T1 里写） |
+| 订单在某个状态下能不能做某件事；加一个订单状态或命令；新需求会不会和已有规则冲突 | `docs/design.md` 的“订单的状态”（一张表与规则目录 SO01–SO15） | `internal/orders/lifecycle.go`（同一张表）与它的说明里“加一个状态或命令”；`sales/structure_test.go` 的 `orderStateReaders`（别处还读状态的地方） |
+| 订单状态变化时要做的事（发事件、审计） | `internal/orders/lifecycle.go` 的 `Transition`（每次变化都经过它：发 `erp.sales_order.changed.v1`，按表审计；本组件不通知人，要通知的组件订阅这个事件） | 表的格决定谁走到这里 |
+| 可出账台账的数怎样变 | `internal/ledger`（台账列唯一的写入） | 协议 05；`docs/rules/pricing.md` 的“可出账金额” |
 | 一个维度、一个操作、列表能筛选的字段 | `internal/core/names.go` | `docs/design.md` 的命令与查询、`BRICKKIT.md` 的契约索引；路由的登记在 `sales/module.go` |
 | 加字段、加接口、改事件 | 装配项目 be-assembly-standard 规范里的“改动配方” | `docs/design.md` 的数据与命令 |
 

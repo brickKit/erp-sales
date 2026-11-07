@@ -16,13 +16,13 @@
 
 | 文件 | 步 | 测的流程 | 覆盖的规则 | 被测的模块 |
 | --- | --- | --- | --- | --- |
-| `quotations_integration_test.go` | `pricingAndQuotations` | 每 EA 的价、一盒取它乘系数；报价发出、接受成同价的订单草稿；缺价、客户不合格被拒 | `docs/rules/pricing.md` | `pricing`、`documents`、`quotations` |
-| `confirmations_integration_test.go` | `confirmations` | 协议 04 的过程表：确认、处理中后恢复、参与方拒绝、丢一次应答、分支到期、确认中取消、服务订单、已确认订单的取消 | RS02–RS05、RS07–RS09、RS14 | `confirmations`、`orders` |
-| `deliveries_integration_test.go` | `deliveries` | 交货身份即消耗身份；可出账按舍入增长、最后一次补齐；库存拒绝则交货失败，没应答的稍后过账 | RS19 | `deliveries`、`ledger` |
-| `billingsource_integration_test.go` | `billingSource` | 以 `erp/billing` 调出账来源；两张认领抢同一行；正式化完成订单并释放分支；别的调用者被拒 | BL01、BL02、BL24、BL05/BL26 | `billingsource` |
+| `quotations_integration_test.go` | `pricingAndQuotations` | 每 EA 的价、一盒取它乘系数；报价发出、接受成同价的订单草稿；缺价、客户不合格被拒 | `docs/rules/pricing.md`；SO01 | `pricing`、`documents`、`quotations` |
+| `confirmations_integration_test.go` | `confirmations` | 协议 04 的过程表：确认、处理中后恢复、参与方拒绝、丢一次应答、分支到期、确认中取消、服务订单、已确认订单的取消 | RS02–RS05、RS07–RS09、RS14；SO02–SO06、SO08–SO10 | `confirmations`、`orders` |
+| `deliveries_integration_test.go` | `deliveries` | 交货身份即消耗身份；可出账按舍入增长、最后一次补齐；库存拒绝则交货失败，没应答的稍后过账 | RS19；SO12 | `deliveries`、`ledger` |
+| `billingsource_integration_test.go` | `billingSource` | 以 `erp/billing` 调出账来源；两张认领抢同一行；正式化完成订单并释放分支；别的调用者被拒 | BL01、BL02、BL24、BL05/BL26；SO13、SO14 | `billingsource`、`ledger` |
 | `lists_integration_test.go` | `lists` | 关键字按单号找到订单；`to_bill` 列出还有可出账的订单 | 协议 14 的列表 | `orders`、`documents` |
 | `orgunits_integration_test.go` | `departments`、`laterOrgEvents` | 按部门维度读订单；部门移到另一部门之下，它的订单跟着走；不认识的动作标为不完整并补取，同一流上的法人不是部门 | 安全 07；P6.33、PJ36 | `orgunits`、`documents` |
-| `lifecycle_integration_test.go` | `lifecycle` | 订单生命周期里业务流程走不到的格子：草稿取消（两次）、已取消的不能改不能确认、草稿不能交货不能认领、已完成的不能取消交货认领、有交货的不能取消、取消过程进行中不能交货不能认领且再取消不起第二个过程 | `docs/design.md` 的订单状态 | `orders`、`confirmations`、`deliveries`、`billingsource` |
+| `lifecycle_integration_test.go` | `lifecycle` | 订单生命周期里业务流程走不到的格子：草稿取消（两次）、已取消的不能改不能确认、草稿不能交货不能认领、已完成的不能取消交货认领、有交货的不能取消、取消过程进行中不能交货不能认领且再取消不起第二个过程 | SO02、SO03、SO07、SO09、SO11–SO13、SO15 | `orders`、`confirmations`、`deliveries`、`billingsource` |
 | `outbox_integration_test.go` | `outbox` | 每个事件合乎 schema，每种类型都发过 | 协议 02 | 全部发事件的模块 |
 | `recoverycheck_integration_test.go` | `recoveryChecks` | 整套恢复的核对：四种对象按版本答“还在不在”（只许恢复工具）；恢复之后协议 04 的检查 | 线协议第 14 章、P14.3 | 入口 `sales/checks.go`、`recoverycheck` |
 | `archive_integration_test.go` | `tiering` | 两张早已结束的订单在没有进行中的过程挡着之后封存、复制、释放；按身份照样读出；默认列表留下很早创建、仍未结束的订单，不列归档的；历史读得到 | 协议 11 的 TR10、TR30；A154、A155 | `orders`（`archive.go`） |
@@ -37,6 +37,8 @@
 没有覆盖的：RS06（最后一次提交与本地确认之间崩溃，要 L3）。
 
 ## 加测试
+
+- 订单生命周期的规则（SO 编号，`docs/design.md` 的“订单的状态”）：测它的那一步在注释里写明编号；`internal/orders` 的 `TestEveryRuleIsTested` 查每条规则都有一步写明。
 
 - 新流程：新文件 `<流程>_integration_test.go`，写一个 `func (fx *fixture) <步>()`，在 `TestSalesEndToEnd` 里按依赖排进顺序，在上表加一行。
 - 已有流程的新情形：加在那一步的文件里，更新上表的“覆盖的规则”。
