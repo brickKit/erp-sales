@@ -26,4 +26,4 @@ gRPC 的方法在入口 `sales/services.go` 转到这里。
 
 ## 测试
 
-`itest/billingsource_integration_test.go`（`billingSource`：BL01、BL02、BL24、BL05/BL26，两张认领抢同一行，正式化完成订单并释放分支，只有 `erp/billing` 能调）。没有覆盖：`order_not_billable`（未确认或取消中的订单被认领）。
+`itest/billingsource_integration_test.go`（`billingSource`：BL01、BL02、BL24、BL05/BL26，两张认领抢同一行，正式化完成订单并释放分支，只有 `erp/billing` 能调）。`order_not_billable`（未确认、已完成、取消中的订单被认领）在 `itest/lifecycle_integration_test.go`。

@@ -97,6 +97,7 @@ func TestSalesEndToEnd(t *testing.T) {
 	fx.billingSource()
 	fx.lists()
 	fx.departments()
+	fx.lifecycle()
 	fx.outbox()
 	fx.recoveryChecks()
 	fx.tiering()
