@@ -6,7 +6,6 @@ import (
 
 	"github.com/brickKit/be-sdk-go/v3/bizdate"
 	"github.com/brickKit/be-sdk-go/v3/db"
-	"github.com/brickKit/be-sdk-go/v3/errs"
 	"github.com/brickKit/be-sdk-go/v3/httpx"
 	"github.com/brickKit/be-sdk-go/v3/idem"
 	"github.com/brickKit/be-sdk-go/v3/ids"
@@ -85,18 +84,17 @@ func (m *Module) createOrder(c *httpx.Context) error {
 }
 
 func (m *Module) getOrder(c *httpx.Context) error {
-	o, err := m.order(c.Ctx(), c.Param("id"))
-	if errs.Is(err, "be", errs.ReasonNotFound) { // not online: archived, read by its key (assembly protocol 11)
-		archived, found, aerr := m.archived(c.Ctx(), c.Param("id"))
-		if aerr != nil {
-			return aerr
-		}
-		if found {
-			o, err = archived, nil
-		}
-	}
+	// the archive first (assembly protocol 11, be-protocol P15.22): a release or a destruction deletes an order's online
+	// rows in batches, so the online tables alone can show part of an order that has left them; a destroyed order
+	// answers NOT_FOUND from the decision on
+	o, found, err := m.archived(c.Ctx(), c.Param("id"))
 	if err != nil {
 		return err
+	}
+	if !found {
+		if o, err = m.order(c.Ctx(), c.Param("id")); err != nil {
+			return err
+		}
 	}
 	if _, _, err := check(c, OpOrderRead, docFacts(o.LegalEntityID, o.DepartmentPath, o.OwnerID)); err != nil {
 		return err

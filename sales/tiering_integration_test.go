@@ -59,6 +59,17 @@ func (fx *fixture) tiering() {
 	require.Equal(t, 2, sealed.Members)
 	_, err = cat.Transfer(ctx, sealed.Unit)
 	require.NoError(t, err)
+	// published, its online rows still there: a release deletes them in batches, children first; in between, the
+	// order reads from the archive whole, never as the header with no lines left online (3.0.37)
+	tx, err := fx.admin.Begin(ctx)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, "SELECT set_config('be.tier_unit', $1, true)", sealed.Unit)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, "DELETE FROM "+itSchema+".order_line WHERE order_id = $1", ended[0]["id"])
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+	assert.Equal(t, before[ended[0]["id"].(string)], fx.get("/api/sales/orders/"+ended[0]["id"].(string)),
+		"halfway through a release: read whole from the archive")
 	why, err := cat.Release(ctx, sealed.Unit)
 	require.NoError(t, err)
 	require.Empty(t, why)
