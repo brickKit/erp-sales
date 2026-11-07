@@ -11,8 +11,8 @@
 
 `lifecycle.go` 是一张表：6 个阶段（`draft`、`confirming`、`confirmed`、`cancelling`＝已确认且取消过程进行中、`completed`、`cancelled`）× 10 个命令（修改、提交确认、取消、交货、认领、完成、三种确认结果、取消过程结束），每格写：拒绝（原文）、忽略、允许、变成某状态（审计与否、操作）、经哪种过程，附加条件，规则编号 SO02–SO15。
 
-- 用法：命令先 `PhaseOf` 取阶段，再 `Decide(阶段, 命令)`，按格行事；要变状态时调 `Transition`（带前置状态的条件更新、发订单事件、按格审计）。不在别处比较订单状态：`sales/structure_test.go` 会拦。
-- **加一个状态或命令**：在表里加一列或一行并定下每一格（`TestTheLifecycleDecidesEveryCell` 不定完不过）；同步改 `docs/design.md` 的同一张表（`TestTheDesignDocumentIsTheLifecycle` 逐格比较）；规则目录加编号、集成测试的注释写上编号（`TestEveryRuleIsTested`）；再看 `sales/structure_test.go` 的 `orderStateReaders`：登记在那里的每一处（把状态交给 `erp/billing` 的台账、恢复核对）都要决定新状态怎样处理；契约里的状态枚举（OpenAPI、事件 schema）一并改。
+- 用法：命令先 `PhaseOf` 取阶段，再 `Decide(阶段, 命令)`，按格行事；要变状态时调 `Transition`（带前置状态的条件更新、发订单事件、按格审计）。表以外不比较、不写订单状态：`sales/structure_test.go` 会拦；表以外必须读状态的（本包的列表与归档也算）登记在它的 `orderStateReaders`。
+- **加一个状态或命令**：在表里加一列或一行并定下每一格（`TestTheLifecycleDecidesEveryCell` 不定完不过）；同步改 `docs/design.md` 的同一张表（`TestTheDesignDocumentIsTheLifecycle` 逐格比较）；规则目录加编号、集成测试的注释写上编号（`TestEveryRuleIsTested`）；再看 `sales/structure_test.go` 的 `orderStateReaders`：登记在那里的每一处（订单列表的 `to_deliver` 与默认范围、归档的“已结束”、历史列表、把状态交给 `erp/billing` 的台账、恢复核对）都要决定新状态怎样处理；契约里的状态枚举（OpenAPI、事件 schema）一并改。
 
 ## 文件
 

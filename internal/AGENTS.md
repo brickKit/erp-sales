@@ -42,7 +42,7 @@
 - **规则只在一处**（`sales/structure_test.go` 检查）：
   - 订单在哪个阶段能做什么、状态怎样变，只在 `orders` 的生命周期表：别的模块 `orders.PhaseOf` → `orders.Decide` → 按格行事，变状态只经 `orders.Transition`；
   - 订单行的台账列只经 `ledger` 的五个函数写；
-  - 别处还要读订单状态的（把状态交给 `erp/billing` 的台账、恢复核对），登记在检查的 `orderStateReaders` 里，写明用途。
+  - 表以外还要读订单状态的（订单列表的筛选与默认范围、归档的“已结束”、把状态交给 `erp/billing` 的台账、恢复核对），登记在检查的 `orderStateReaders` 里，写明用途。
 - **表的属主**写在各模块的说明里；`quotations` 接受报价时直接插入订单草稿（状态取表的默认值 `draft`，SO01）。
 - **事务外取证、事务内写**：上游调用都在 `masterdata`，在事务之前；写入、审计（`core.Change`）与发件表（`core.Emit`）同一个事务。
 
