@@ -159,6 +159,8 @@
 
 ## 实现状态
 
+3.0.47：依赖换到 mdm/partner 3.0.40（种子开供应商角色；装配项目阶段计划 C2 的 P4a），行为不变
+
 3.0.46：依赖换到 mdm/partner 3.0.39（供应商角色）与 erp/inventory 3.0.37（采购收货与退货；装配项目阶段计划 C2 的 P0b），行为不变
 
 3.0.45：be-sdk-go alpha.121（全系统同一个 SDK 版本；sectest 的授权组件替身答 CheckLinkChange 与 Administrators）
