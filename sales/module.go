@@ -13,6 +13,7 @@ import (
 	orders "github.com/brickKit/erp-sales/v3/internal/orders"
 	orgunits "github.com/brickKit/erp-sales/v3/internal/orgunits"
 	quotations "github.com/brickKit/erp-sales/v3/internal/quotations"
+	quoterequests "github.com/brickKit/erp-sales/v3/internal/quoterequests"
 
 	"github.com/brickKit/be-sdk-go/v3/db"
 	"github.com/brickKit/be-sdk-go/v3/errs"
@@ -101,11 +102,16 @@ func (m *Module) Services(s *grpcx.Services) error {
 func (m *Module) Subscriptions(s *events.Subscriptions) error {
 	s.Add(events.Sub{Name: "org-unit-events", Streams: []string{core.OrgStream}, Types: []string{core.OrgUnitEvents},
 		Handle: m.received(orgunits.OnOrgUnit)})
+	// crm/opportunity's quote requests: subscribed, not a dependency (design QR01)
+	s.Add(events.Sub{Name: "quote-requests", Streams: []string{core.OpportunityStream}, Types: []string{core.QuoteRequested},
+		Handle: m.received(quoterequests.OnRequested)})
 	return nil
 }
 
 // Jobs declares the background work (protocol 01).
 func (m *Module) Jobs(j *work.Jobs) error {
+	j.Add(work.Job{Name: quoterequests.JobDraft, Kind: work.Queue, Effect: work.Local, MaxAttempts: work.Unlimited,
+		Handle: m.job(quoterequests.DraftJob)})
 	j.Add(work.Job{Name: confirmations.JobAdvance, Kind: work.Queue, Effect: work.IdempotentExternal, Handle: m.job(confirmations.AdvanceJob),
 		DeadLetter: m.dead(confirmations.AdvanceDead)})
 	// an issue is retried until the inventory answers: only it knows whether the goods left

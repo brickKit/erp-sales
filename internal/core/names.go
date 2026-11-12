@@ -19,19 +19,25 @@ const (
 	Credit    = "erp/credit"
 	// Billing is the user of the billable ledger (protocol 05).
 	Billing = "erp/billing"
+	// Opportunity asks for quotations by an event; not a dependency (CRM and ERP only meet by events, design QR01).
+	Opportunity = "crm/opportunity"
 )
 
 // The stream and its event types (contract/events).
 const (
-	Stream              = "erp.sales"
-	QuotationChanged    = "erp.quotation.changed.v1"
-	OrderChanged        = "erp.sales_order.changed.v1"
-	ConfirmationEnded   = "erp.sales_order.confirmation_ended.v1"
-	DeliveryChanged     = "erp.delivery.changed.v1"
-	DeliveryPosted      = "erp.delivery.posted.v1"
-	BillableChanged     = "erp.billable.changed.v1"
-	PriceListChanged    = "erp.price_list.changed.v1"
-	PriceListItemChange = "erp.price_list_item.changed.v1"
+	Stream               = "erp.sales"
+	QuotationChanged     = "erp.quotation.changed.v1"
+	OrderChanged         = "erp.sales_order.changed.v1"
+	ConfirmationEnded    = "erp.sales_order.confirmation_ended.v1"
+	DeliveryChanged      = "erp.delivery.changed.v1"
+	DeliveryPosted       = "erp.delivery.posted.v1"
+	BillableChanged      = "erp.billable.changed.v1"
+	PriceListChanged     = "erp.price_list.changed.v1"
+	PriceListItemChange  = "erp.price_list_item.changed.v1"
+	QuoteRequestRejected = "erp.quote_request.rejected.v1"
+	// crm/opportunity's quote requests (QR01)
+	OpportunityStream = "crm.opportunity"
+	QuoteRequested    = "crm.opportunity.quote_requested.v1"
 	// the source stream of the department projection
 	OrgStream       = "mdm.org"
 	OrgUnitChanged  = "mdm.org_unit.changed.v1"

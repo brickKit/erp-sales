@@ -24,7 +24,8 @@
     "customer",
     "currency",
     "owner_id",
-    "department_id"
+    "department_id",
+    "opportunity_ref"
   ],
   "properties": {
     "id": {
@@ -398,6 +399,14 @@
     "updated_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "opportunity_ref": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid",
+      "description": "the crm/opportunity opportunity, carried from the accepted quotation (QR05); null otherwise"
     }
   }
 }

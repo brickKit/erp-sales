@@ -98,6 +98,7 @@ func TestSalesEndToEnd(t *testing.T) {
 	fx.lists()
 	fx.departments()
 	fx.lifecycle()
+	fx.quoteRequests()
 	fx.outbox()
 	fx.recoveryChecks()
 	fx.tiering()
@@ -162,7 +163,7 @@ func start(t *testing.T) *fixture {
 	// at epoch 2.1). A clean stream each run.
 	js, err := jetstream.Connect(natsURL, "sales-it-clean")
 	require.NoError(t, err)
-	for _, s := range []string{orgStream.Name, core.Stream} {
+	for _, s := range []string{orgStream.Name, core.Stream, opportunityStream.Name} {
 		_ = js.DeleteStream(ctx, s) // not there: nothing to clean
 	}
 	_ = js.Close()
@@ -171,6 +172,7 @@ func start(t *testing.T) *fixture {
 	require.NoError(t, err)
 	t.Cleanup(func() { fx.tr.Close() })
 	require.NoError(t, fx.tr.EnsureStream(ctx, orgStream))
+	require.NoError(t, fx.tr.EnsureStream(ctx, opportunityStream)) // crm/opportunity's forwarder makes it in a deployment
 
 	env := w.Env(t, core.ID)
 	for k, v := range map[string]string{"COMPONENT_ID": core.ID, "COMPONENT_VERSION": sales.Version, "PORT": itPort,

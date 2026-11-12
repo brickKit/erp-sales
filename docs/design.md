@@ -31,6 +31,8 @@
 | 业务叫法 | 定义 | 代码标识符 |
 | --- | --- | --- |
 | 报价 | 给客户的价格与数量提议，可以转成订单；不预占任何东西 | `quotation` |
+| 商机参考、请求报价 | `crm/opportunity` 的商机发布“请求报价”的事实，本组件生成带商机参考的报价草稿；报价转订单时商机参考带到订单（A71） | `opportunity_ref`、`quote_request_id`；表 `quote_request_in` |
+| 请求的产品 | 请求报价带来的产品、数量、单位，放在草稿上给销售人员参考，由人补成带价格与税率的明细 | `requested_products` |
 | 销售订单与明细 | 一个法人对一个客户的订单；明细（也叫订单行）是实物（库存商品）或服务 | `sales_order`、`order_line`；`line_kind`：`goods`、`service` |
 | 订单负责人 | 销售自己拥有的字段，按负责人限定数据范围用它 | `owner_id` |
 | 订单部门 | 订单归属的部门（`mdm/org` 的部门），按部门限定数据范围用它 | `department_id` |
@@ -48,8 +50,9 @@
 
 | 表 | 内容 | 终态与保留 |
 | --- | --- | --- |
-| `quotation`、`quotation_line` | 报价：单号、法人、客户、币种、有效期、负责人、部门、状态；明细同订单 | `accepted`、`cancelled`、`expired`；不删除 |
-| `sales_order` | 订单：单号、法人、客户（与快照的名称、税号）、币种与汇率快照、业务日期、负责人、部门（与复制的部门路径）、状态、修订、合计（不含税、税额、含税）、版本 | `completed`、`cancelled`；不删除 |
+| `quotation`、`quotation_line` | 报价：单号、法人、客户、币种、有效期、负责人、部门、状态、商机参考、请求身份、请求的产品；明细同订单 | `accepted`、`cancelled`、`expired`；不删除 |
+| `sales_order` | 订单：单号、法人、客户（与快照的名称、税号）、币种与汇率快照、业务日期、负责人、部门（与复制的部门路径）、状态、修订、合计（不含税、税额、含税）、版本；商机参考不存在订单上，按 `quotation_id` 读它的报价（报价不删除也不归档；订单表加列会改变已结束订单这一数据类别的结构，已归档的旧单元要登记转换器才读得出，SDK 的组件接口还登记不了） |
+| `quote_request_in` | 收到的请求报价：请求身份（即商机事实的身份，主键）、商机、载荷、结果 `received`、`drafted`（报价身份）、`rejected`（原因） | 终态保留，作去重依据 | `completed`、`cancelled`；不删除 |
 | `order_line` | 明细：种类、产品与快照（代码、名称、单位）、数量与销售单位、基本单位数量、仓库、单价、税率、行金额、税额、已交货数量；可出账台账的两维六列（带 CHECK：每维 `claimed + billed ≤ billable`） | 随订单 |
 | `confirmation`、`confirmation_branch` | 过程：订单与修订、种类、状态、原因、操作者；每个参与方的分支身份与最后知道的状态（请求的幂等键在 SDK 的幂等表） | 终态保留 |
 | `delivery`、`delivery_line` | 交货：单号、订单、法人、部门（`department_path` 是复制来的，随部门事件改写）、状态、库存消耗身份、明细（订单行、数量、批次或序列号） | `posted`、`failed`；不删除 |
@@ -104,6 +107,18 @@
 
 交货进度与出账进度不是订单状态，是明细上的量（已交货、可出账、已出账），列表可以按它们筛选。
 
+## 商机的请求报价
+
+`crm/opportunity` 与本组件只经事件协作（边界卡）：本组件订阅它的 `crm.opportunity.quote_requested.v1`，不声明它为依赖（两边都声明会把精确版本互相钉住）；商机没装时订阅的流是空的，什么也不发生，报价照常手工创建。
+
+| 规则 | 内容 | 代码 | 测试 |
+| --- | --- | --- | --- |
+| QR01 | 收到请求：按请求身份（事实身份）插入 `quote_request_in`（`received`），已有的什么也不做——重复投递只生成一张草稿；同一事务排工作 `draft-quotation`。订阅的处理在 SDK 的事务里，不调用别的组件 | `quoterequests.OnRequested` | `quoteRequests` |
+| QR02 | 工作在事务外取证：法人可用、币种可用、客户在该法人有资格（用途 `sell`），同报价的新建；主数据不可达时工作重试。取证之后一个事务：请求已不是 `received` 的什么也不做 | `quoterequests.DraftJob` | `quoteRequests` |
+| QR03 | 都可用：生成报价草稿——法人、客户（快照）、币种、负责人取请求的，部门留空，有效期留空，没有明细；记商机参考与请求身份，请求的产品原样放在草稿上（不校验：产品与价格在人补明细时按 `rules/pricing.md` 校验）；请求变 `drafted`；报价的事件与审计（没有用户操作者：是本组件自己做的）同一事务。草稿的负责人看得到它（数据范围按负责人） | `quoterequests.DraftJob` | `quoteRequests` |
+| QR04 | 有一项不可用：不生成草稿，请求变 `rejected`，发布事实 `erp.quote_request.rejected.v1`（事实身份 = 请求身份；商机、原因 `LEGAL_ENTITY_NOT_USABLE`、`CURRENCY_NOT_USABLE` 或 `NOT_ELIGIBLE` 与说明） | `quoterequests.DraftJob` | `quoteRequests` |
+| QR05 | 没有明细的报价只能是草稿：发出要至少一行（`REQUEST_INVALID`）；修改时给明细就整体替换，照常至少一行。报价接受转订单时商机参考带到订单 | `quotations.QuotationAction`、`quotations.AcceptQuotation` | `quoteRequests` |
+
 ## 规则要点
 
 - 订单的确认只有一个过程实例；只有过程进入 `confirmed` 之后订单才算确认（协议 04）。确认前，在事务外取证：法人启用（`mdm/org` 来源读取）、客户的资格（`mdm/partner`，用途 `sell`）、每个产品的资格（`mdm/product`，用途 `sell`）、外币订单的汇率；资格在 W（30 秒）内提交。细节在 [flows/confirmation.md](flows/confirmation.md)。
@@ -139,8 +154,10 @@
 
 流 `erp.sales`：
 
-- 完整状态事件（可覆盖）：报价 `erp.quotation.changed.v1`（带商机参考，本版为空）、订单 `erp.sales_order.changed.v1`（也是 `OrderService.Read` 的数据）、交货 `erp.delivery.changed.v1`、价格表 `erp.price_list.changed.v1` 与价格 `erp.price_list_item.changed.v1`。
-- 增量事实：确认结束 `erp.sales_order.confirmation_ended.v1`（事实身份是过程身份，结果与原因）；交货已过账 `erp.delivery.posted.v1`（以后复杂仓储订阅“交货请求”）；可出账台账变化 `erp.billable.changed.v1`（协议 05，供出账显示与对账）。
+- 完整状态事件（可覆盖）：报价 `erp.quotation.changed.v1`（带商机参考、请求身份、请求的产品）、订单 `erp.sales_order.changed.v1`（带商机参考；也是 `OrderService.Read` 的数据）、交货 `erp.delivery.changed.v1`、价格表 `erp.price_list.changed.v1` 与价格 `erp.price_list_item.changed.v1`。
+- 增量事实：确认结束 `erp.sales_order.confirmation_ended.v1`（事实身份是过程身份，结果与原因）；交货已过账 `erp.delivery.posted.v1`（以后复杂仓储订阅“交货请求”）；可出账台账变化 `erp.billable.changed.v1`（协议 05，供出账显示与对账）；拒绝请求报价 `erp.quote_request.rejected.v1`（QR04，供商机标记请求）。
+
+订阅：`mdm/org` 的部门事件（部门投影）；`crm/opportunity` 的 `crm.opportunity.quote_requested.v1`（QR01，不声明依赖）。
 
 ## 依赖
 
@@ -155,9 +172,11 @@
 | 身份、授权 | 必需 | — | — |
 | `infra/audit` | 可选 | 确认、取消的审计 | 只写本地日志 |
 
-下游：`erp/billing`（认领可出账额度；缺时不能出账）；`infra/print`（不直接依赖，账单的打印在出账组件）。以后：`erp/tax`、`erp/contract`、`erp/finance`（款到发货）、`crm/opportunity` 与 `crm/customer`（只经事件）、`infra/workflow`（审批）、物流承运与电商平台的成员。
+下游：`erp/billing`（认领可出账额度；缺时不能出账）；`infra/print`（不直接依赖，账单的打印在出账组件）。`crm/opportunity`（只经事件，不声明依赖：订阅它的请求报价，它订阅本组件的报价、订单与拒绝请求的事件）。以后：`erp/tax`、`erp/contract`、`erp/finance`（款到发货）、`crm/customer`（只经事件）、`infra/workflow`（审批）、物流承运与电商平台的成员。
 
 ## 实现状态
+
+3.0.50（装配项目阶段计划 C6 的 P2b）：商机的请求报价（QR01–QR05）：订阅、去重、草稿与拒绝的事实；报价与订单带商机参考（契约 `contract/v3.0.0-alpha.4`）。
 
 3.0.49：依赖换到 erp/inventory 3.0.39（按计价序号读流水，装配项目阶段计划 C5 的 P0b）及随之连锁的版本；行为不变。
 
@@ -211,7 +230,7 @@
 
 3.0.24（底层先行第 4 项 T8 的级联）：be-sdk-go alpha.81（恢复模式、补发与消费者进度）；流的补发（`be.source.v1.ResendService`，操作 `erp.sales.system.resend`，登记在本组件的 system 资源下，部署内任何组件可调用，线协议 P6.38）；清单声明 `RECOVERY_PHASE`。
 
-实验第 7 步：报价、订单（实物与服务明细）、价格表、确认过程的全部状态与恢复、取消、发起交货、按交货的可出账台账与出账认领、订单完成时释放剩余分支、列表与查询、事件。答“能力不支持”的：修订、退货与折让、换货、款到发货、直运、寄售、合同与商机的参考、定价规则、提交审批、服务完成的登记、关闭未交货部分、期初导入。
+实验第 7 步：报价、订单（实物与服务明细）、价格表、确认过程的全部状态与恢复、取消、发起交货、按交货的可出账台账与出账认领、订单完成时释放剩余分支、列表与查询、事件。答“能力不支持”的：修订、退货与折让、换货、款到发货、直运、寄售、合同的参考、定价规则、提交审批、服务完成的登记、关闭未交货部分、期初导入。
 
 服务明细本版在确认后即可出账（`billable` 等于订单数量），因为“服务完成的登记”还没有。
 

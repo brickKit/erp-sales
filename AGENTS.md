@@ -28,6 +28,7 @@
 | [`pricing`](internal/pricing/AGENTS.md) | 价格表；一行取哪个价（`PriceOf`） | `price_list`、`price_list_item` |
 | [`orgunits`](internal/orgunits/AGENTS.md) | 部门投影（协议 02）：部门路径复制到单据上 | `org_realign`（投影本身在 SDK 的表里） |
 | [`recoverycheck`](internal/recoverycheck/AGENTS.md) | 整套恢复后协议 04 的核对 | — |
+| [`quoterequests`](internal/quoterequests/AGENTS.md) | `crm/opportunity` 的请求报价（只经事件）：按请求身份去重，事务外取证，生成带商机参考的报价草稿或发布拒绝的事实 | `quote_request_in`；草稿写进 `quotation` |
 
 模块共用的（不属于某一个业务）：[`documents`](internal/documents/AGENTS.md)（报价与订单共用的表头、行的取价与金额、单号、列表）、[`ledger`](internal/ledger/AGENTS.md)（可出账台账：订单行台账列唯一的写入与它的事件）、[`masterdata`](internal/masterdata/AGENTS.md)（事务外向主数据取证）、[`core`](internal/core/AGENTS.md)（名字、资源与操作的定义、错误与校验、记录类型）。
 

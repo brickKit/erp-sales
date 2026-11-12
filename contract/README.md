@@ -11,7 +11,7 @@
 | `proto/be/erp/sales/v3/sales.proto` | `BillingSourceService`（可出账台账与出账认领：`Ledger`、`Claim`、`Renew`、`Confirm`、`Formalize`、`Release`、`Reverse`）；`OrderService.Read` |
 | `gen/go/be/erp/sales/v3/` | Go 代码，包 `salesv3`；模块 `github.com/brickKit/erp-sales/contract/v3` |
 | `python/` | Python 包 `contract-erp-sales`，模块 `be.erp.sales.v3` |
-| `events/` | 流 `erp.sales`：报价、订单、交货、价格表与价格（完整状态）；确认结束、交货已过账、可出账台账变化（增量事实） |
+| `events/` | 流 `erp.sales`：报价、订单、交货、价格表与价格（完整状态；报价与订单带 `crm/opportunity` 的商机参考）；确认结束、交货已过账、可出账台账变化、拒绝请求报价（增量事实） |
 | `openapi.yaml` | 用户面；每个路由的操作写在 `x-operation` |
 
 ## 要点

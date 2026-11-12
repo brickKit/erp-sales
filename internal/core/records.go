@@ -79,40 +79,62 @@ type OrderLine struct {
 
 // Quotation is a quotation's complete state (erp.quotation.changed.v1).
 type Quotation struct {
-	ID             string      `json:"id"`
-	Number         string      `json:"number"`
-	LegalEntityID  string      `json:"legal_entity_id"`
-	Customer       Customer    `json:"customer"`
-	Currency       string      `json:"currency"`
-	OwnerID        string      `json:"owner_id"`
-	DepartmentID   *string     `json:"department_id"`
-	State          string      `json:"state"`
-	ValidUntil     *string     `json:"valid_until"`
-	OrderID        *string     `json:"order_id"`
-	OpportunityRef *string     `json:"opportunity_ref"`
-	Lines          []QuoteLine `json:"lines"`
-	Totals         Totals      `json:"totals"`
-	Version        int64       `json:"version"`
-	CreatedAt      string      `json:"created_at"`
-	UpdatedAt      string      `json:"updated_at"`
+	ID             string   `json:"id"`
+	Number         string   `json:"number"`
+	LegalEntityID  string   `json:"legal_entity_id"`
+	Customer       Customer `json:"customer"`
+	Currency       string   `json:"currency"`
+	OwnerID        string   `json:"owner_id"`
+	DepartmentID   *string  `json:"department_id"`
+	State          string   `json:"state"`
+	ValidUntil     *string  `json:"valid_until"`
+	OrderID        *string  `json:"order_id"`
+	OpportunityRef *string  `json:"opportunity_ref"`
+	QuoteRequestID *string  `json:"quote_request_id"`
+	// RequestedProducts are the products a crm/opportunity quote request suggested (QR03); never checked here.
+	RequestedProducts RequestedProducts `json:"requested_products"`
+	Lines             []QuoteLine       `json:"lines"`
+	Totals            Totals            `json:"totals"`
+	Version           int64             `json:"version"`
+	CreatedAt         string            `json:"created_at"`
+	UpdatedAt         string            `json:"updated_at"`
 
 	DepartmentPath *string `json:"-"`
 }
 
+// RequestedProduct is one product a quote request suggested.
+type RequestedProduct struct {
+	ProductID string `json:"product_id"`
+	Quantity  string `json:"quantity"`
+	Unit      string `json:"unit"`
+}
+
+// RequestedProducts is an array in every payload, empty for a quotation made by hand (never null).
+type RequestedProducts []RequestedProduct
+
+func (r RequestedProducts) MarshalJSON() ([]byte, error) {
+	if r == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal([]RequestedProduct(r))
+}
+
 // Order is a sales order's complete state (erp.sales_order.changed.v1; also OrderService.Read's data).
 type Order struct {
-	ID             string      `json:"id"`
-	Number         string      `json:"number"`
-	LegalEntityID  string      `json:"legal_entity_id"`
-	Customer       Customer    `json:"customer"`
-	Currency       string      `json:"currency"`
-	OwnerID        string      `json:"owner_id"`
-	DepartmentID   *string     `json:"department_id"`
-	State          string      `json:"state"`
-	BusinessDate   string      `json:"business_date"`
-	ExchangeRate   *Rate       `json:"exchange_rate"`
-	Revision       int         `json:"revision"`
-	QuotationID    *string     `json:"quotation_id"`
+	ID            string   `json:"id"`
+	Number        string   `json:"number"`
+	LegalEntityID string   `json:"legal_entity_id"`
+	Customer      Customer `json:"customer"`
+	Currency      string   `json:"currency"`
+	OwnerID       string   `json:"owner_id"`
+	DepartmentID  *string  `json:"department_id"`
+	State         string   `json:"state"`
+	BusinessDate  string   `json:"business_date"`
+	ExchangeRate  *Rate    `json:"exchange_rate"`
+	Revision      int      `json:"revision"`
+	QuotationID   *string  `json:"quotation_id"`
+	// OpportunityRef is read from the quotation (QR05): the order's table has no column of it.
+	OpportunityRef *string     `json:"opportunity_ref"`
 	ConfirmationID *string     `json:"confirmation_id"`
 	Reason         *string     `json:"reason"`
 	Lines          []OrderLine `json:"lines"`
@@ -190,7 +212,7 @@ const (
 		q.currency, q.owner_id, q.department_id::text, q.department_path, q.state, q.valid_until::text, q.order_id::text,
 		trim_scale(q.net)::text, trim_scale(q.tax)::text, trim_scale(q.net + q.tax)::text, q.version, q.created_at, q.updated_at,
 		COALESCE((SELECT jsonb_agg(jsonb_build_object(` + lineJSON + `) ORDER BY l.line_no) FROM quotation_line l
-			WHERE l.quotation_id = q.id), '[]'::jsonb)`
+			WHERE l.quotation_id = q.id), '[]'::jsonb), q.opportunity_ref::text, q.quote_request_id::text, q.requested_products`
 	OrderCols = `o.id::text, o.number, o.legal_entity_id::text, o.customer_id::text, o.customer_name, o.customer_tax_id,
 		o.currency, o.owner_id, o.department_id::text, o.department_path, o.state, o.business_date::text,
 		trim_scale(o.rate)::text, o.rate_date::text, o.rate_type, o.rate_record_id::text, o.rate_record_version, o.revision,
@@ -201,7 +223,8 @@ const (
 			'billable', jsonb_build_object('quantity', trim_scale(l.billable_qty)::text, 'amount', trim_scale(l.billable_amt)::text),
 			'claimed', jsonb_build_object('quantity', trim_scale(l.claimed_qty)::text, 'amount', trim_scale(l.claimed_amt)::text),
 			'billed', jsonb_build_object('quantity', trim_scale(l.billed_qty)::text, 'amount', trim_scale(l.billed_amt)::text))
-			ORDER BY l.line_no) FROM order_line l WHERE l.order_id = o.id), '[]'::jsonb)`
+			ORDER BY l.line_no) FROM order_line l WHERE l.order_id = o.id), '[]'::jsonb),
+		(SELECT oq.opportunity_ref::text FROM quotation oq WHERE oq.id = o.quotation_id)`
 	DeliveryCols = `d.id::text, d.number, d.order_id::text, d.legal_entity_id::text, d.state, d.reason, d.business_date::text,
 		d.owner_id, d.department_id::text, d.department_path, d.version, d.created_at, d.updated_at,
 		COALESCE((SELECT jsonb_agg(jsonb_build_object('order_line_id', l.order_line_id::text, 'product_id', l.product_id::text,
@@ -216,14 +239,17 @@ const (
 func ScanQuotation(row pgx.Row) (Quotation, error) {
 	var q Quotation
 	var created, updated time.Time
-	var lines []byte
+	var lines, requested []byte
 	err := row.Scan(&q.ID, &q.Number, &q.LegalEntityID, &q.Customer.PartnerID, &q.Customer.Name, &q.Customer.TaxID,
 		&q.Currency, &q.OwnerID, &q.DepartmentID, &q.DepartmentPath, &q.State, &q.ValidUntil, &q.OrderID, &q.Totals.Net,
-		&q.Totals.Tax, &q.Totals.Gross, &q.Version, &created, &updated, &lines)
+		&q.Totals.Tax, &q.Totals.Gross, &q.Version, &created, &updated, &lines, &q.OpportunityRef, &q.QuoteRequestID, &requested)
 	if err != nil {
 		return q, err
 	}
 	q.CreatedAt, q.UpdatedAt = canon.Time(created), canon.Time(updated)
+	if err := json.Unmarshal(requested, &q.RequestedProducts); err != nil {
+		return q, err
+	}
 	return q, json.Unmarshal(lines, &q.Lines)
 }
 
@@ -236,7 +262,7 @@ func ScanOrder(row pgx.Row) (Order, error) {
 	err := row.Scan(&o.ID, &o.Number, &o.LegalEntityID, &o.Customer.PartnerID, &o.Customer.Name, &o.Customer.TaxID,
 		&o.Currency, &o.OwnerID, &o.DepartmentID, &o.DepartmentPath, &o.State, &o.BusinessDate, &rate, &rateDate, &rateType,
 		&rateID, &rateVersion, &o.Revision, &o.QuotationID, &o.ConfirmationID, &o.Reason, &o.Totals.Net, &o.Totals.Tax,
-		&o.Totals.Gross, &o.Version, &created, &updated, &lines)
+		&o.Totals.Gross, &o.Version, &created, &updated, &lines, &o.OpportunityRef)
 	if err != nil {
 		return o, err
 	}

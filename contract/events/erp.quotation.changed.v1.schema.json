@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://brickkit.dev/erp-sales/events/erp.quotation.changed.v1.schema.json",
   "title": "erp.quotation.changed.v1",
-  "description": "A quotation (a full-state event); the record ID is its UUIDv7. It reserves nothing; accepting turns it into an order draft.",
+  "description": "A quotation (a full-state event); the record ID is its UUIDv7. It reserves nothing; accepting turns it into an order draft. A draft made from a crm/opportunity quote request may have no lines until a user adds them; it is sent only with lines (QR05).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -21,7 +21,9 @@
     "customer",
     "currency",
     "owner_id",
-    "department_id"
+    "department_id",
+    "quote_request_id",
+    "requested_products"
   ],
   "properties": {
     "id": {
@@ -104,7 +106,8 @@
         "string",
         "null"
       ],
-      "description": "crm/opportunity later"
+      "format": "uuid",
+      "description": "the crm/opportunity opportunity the quotation was made for (QR03); null for a quotation made by hand"
     },
     "lines": {
       "type": "array",
@@ -266,6 +269,40 @@
     "updated_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "quote_request_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid",
+      "description": "the opportunity's quote request this draft answers (the fact ID of crm.opportunity.quote_requested.v1); null otherwise"
+    },
+    "requested_products": {
+      "type": "array",
+      "description": "products the quote request suggested, kept on the draft for the user; not checked (QR03); empty for a quotation made by hand",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "product_id",
+          "quantity",
+          "unit"
+        ],
+        "properties": {
+          "product_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "quantity": {
+            "type": "string",
+            "pattern": "^[0-9]+(\\.[0-9]+)?$"
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      }
     }
   }
 }

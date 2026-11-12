@@ -16,6 +16,7 @@
 | `pricing` | 价格表；一行取哪个价 | `core`、`masterdata` |
 | `orgunits` | 部门投影（协议 02） | `core`、`masterdata` |
 | `recoverycheck` | 整套恢复后协议 04 的核对 | `confirmations`、`core` |
+| `quoterequests` | `crm/opportunity` 的请求报价：收下去重、取证后生成报价草稿或发布拒绝 | `core`、`documents`、`masterdata` |
 | `documents`（共用） | 报价与订单共用：表头的取证与授权、行的取价与金额、单号、列表 | `core`、`masterdata`、`orgunits`、`pricing` |
 | `ledger`（共用） | **可出账台账**（订单行的台账列唯一的写入与它的事件） | `core` |
 | `masterdata`（共用） | 事务外向主数据组件取证 | `core` |
@@ -27,7 +28,7 @@
 | --- | --- |
 | 7 | `deliveries`、`billingsource`、`recoverycheck` |
 | 6 | `confirmations` |
-| 5 | `orders`、`quotations` |
+| 5 | `orders`、`quotations`、`quoterequests` |
 | 4 | `documents` |
 | 3 | `orgunits`、`pricing` |
 | 2 | `masterdata`、`ledger` |

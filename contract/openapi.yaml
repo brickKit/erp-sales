@@ -135,7 +135,7 @@ paths:
     post:
       operationId: sendQuotation
       x-operation: erp.sales.quotation.edit
-      summary: Mark a draft sent to the customer
+      summary: Mark a draft sent to the customer; a draft with no lines (one made from an opportunity's quote request) is not sent (QR05)
       responses:
         '200':
           description: 'the quotation (accept: with order_id)'

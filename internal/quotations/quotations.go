@@ -189,6 +189,9 @@ func QuotationAction(m *core.Base, action string) httpx.Handler {
 			if !contains(from, q.State) {
 				return core.ErrState.New("a " + q.State + " quotation cannot be " + to)
 			}
+			if action == "send" && len(q.Lines) == 0 { // a draft made from a quote request until a user adds lines (QR05)
+				return core.Invalid("lines", "a quotation is sent with lines")
+			}
 			if _, err := tx.Exec(ctx, `UPDATE quotation SET state = $2, version = version + 1, updated_at = now()
 				WHERE id = $1`, q.ID, to); err != nil {
 				return err

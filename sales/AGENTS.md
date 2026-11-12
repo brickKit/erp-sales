@@ -12,7 +12,7 @@
 | 文件 | 内容 |
 | --- | --- |
 | `definition.go` | `Version`、端口、迁移；`Definition()` 把身份、依赖、配置、资源与操作（`core.Definitions()`）、数据类别（`orders.OrdersClass()`）收成组件定义 |
-| `module.go` | `Module` 与 `New`；`Routes`（用户面的每条路由 → 模块的处理函数与操作）、`Services`（系统面：出账来源只许 `erp/billing`，订单读取任何组件）、`Subscriptions`（部门事件 → `orgunits`）、`Jobs`（每个后台工作 → 模块）；`handler`、`job`、`dead`、`received` 把“先收 `*core.Base`”的模块函数适配成 SDK 的签名 |
+| `module.go` | `Module` 与 `New`；`Routes`（用户面的每条路由 → 模块的处理函数与操作）、`Services`（系统面：出账来源只许 `erp/billing`，订单读取任何组件）、`Subscriptions`（部门事件 → `orgunits`；商机的请求报价 → `quoterequests`）、`Jobs`（每个后台工作 → 模块）；`handler`、`job`、`dead`、`received` 把“先收 `*core.Base`”的模块函数适配成 SDK 的签名 |
 | `services.go` | gRPC 方法（`BillingSourceService`、`OrderService.Read`）转给 `billingsource`；`Tiering` 转给 `orders` |
 | `checks.go` | 整套恢复的核对（线协议第 14 章）：四种对象按版本答“还在不在”；协议 04 的检查转给 `recoverycheck` |
 | `contract_test.go` | 单元测试：清单的 `configSchema` 与 `events`、OpenAPI 与路由一一对应、事件载荷合乎 schema、合并安全 |

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brickkit.dev/erp-sales/events/erp.quote_request.rejected.v1.schema.json",
+  "title": "erp.quote_request.rejected.v1",
+  "description": "An incremental fact: a crm/opportunity quote request made no quotation draft (QR04); the fact ID is the request's.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fact_id",
+    "opportunity_id",
+    "reason",
+    "detail",
+    "occurred_at"
+  ],
+  "properties": {
+    "fact_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "the quote request (the fact ID of crm.opportunity.quote_requested.v1)"
+    },
+    "opportunity_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reason": {
+      "enum": [
+        "LEGAL_ENTITY_NOT_USABLE",
+        "CURRENCY_NOT_USABLE",
+        "NOT_ELIGIBLE"
+      ]
+    },
+    "detail": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

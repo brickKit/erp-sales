@@ -30,7 +30,7 @@ func (fx *fixture) outbox() {
 		assert.NoError(t, s.Validate(doc), "%s: %s", typ, payload)
 	}
 	for _, typ := range []string{core.QuotationChanged, core.OrderChanged, core.ConfirmationEnded, core.DeliveryChanged, core.DeliveryPosted,
-		core.BillableChanged, core.PriceListChanged, core.PriceListItemChange} {
+		core.BillableChanged, core.PriceListChanged, core.PriceListItemChange, core.QuoteRequestRejected} {
 		assert.NotZero(t, counts[typ], typ)
 	}
 }
