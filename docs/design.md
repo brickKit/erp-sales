@@ -116,7 +116,7 @@
 | QR01 | 收到请求：按请求身份（事实身份）插入 `quote_request_in`（`received`），已有的什么也不做——重复投递只生成一张草稿；同一事务排工作 `draft-quotation`。订阅的处理在 SDK 的事务里，不调用别的组件 | `quoterequests.OnRequested` | `quoteRequests` |
 | QR02 | 工作在事务外取证：法人可用、币种可用、客户在该法人有资格（用途 `sell`），同报价的新建；主数据不可达时工作重试。取证之后一个事务：请求已不是 `received` 的什么也不做 | `quoterequests.DraftJob` | `quoteRequests` |
 | QR03 | 都可用：生成报价草稿——法人、客户（快照）、币种、负责人取请求的，部门留空，有效期留空，没有明细；记商机参考与请求身份，请求的产品原样放在草稿上（不校验：产品与价格在人补明细时按 `rules/pricing.md` 校验）；请求变 `drafted`；报价的事件与审计（没有用户操作者：是本组件自己做的）同一事务。草稿的负责人看得到它（数据范围按负责人） | `quoterequests.DraftJob` | `quoteRequests` |
-| QR04 | 有一项不可用：不生成草稿，请求变 `rejected`，发布事实 `erp.quote_request.rejected.v1`（事实身份 = 请求身份；商机、原因 `LEGAL_ENTITY_NOT_USABLE`、`CURRENCY_NOT_USABLE` 或 `NOT_ELIGIBLE` 与说明） | `quoterequests.DraftJob` | `quoteRequests` |
+| QR04 | 有一项不可用（请求里法人、客户、币种或负责人的格式不对也算，答 `NOT_ELIGIBLE`）：不生成草稿，请求变 `rejected`，发布事实 `erp.quote_request.rejected.v1`（事实身份 = 请求身份；商机、原因 `LEGAL_ENTITY_NOT_USABLE`、`CURRENCY_NOT_USABLE` 或 `NOT_ELIGIBLE` 与说明） | `quoterequests.DraftJob` | `quoteRequests` |
 | QR05 | 没有明细的报价只能是草稿：发出要至少一行（`REQUEST_INVALID`）；修改时给明细就整体替换，照常至少一行。报价接受转订单时商机参考带到订单 | `quotations.QuotationAction`、`quotations.AcceptQuotation` | `quoteRequests` |
 
 ## 规则要点
@@ -175,6 +175,8 @@
 下游：`erp/billing`（认领可出账额度；缺时不能出账）；`infra/print`（不直接依赖，账单的打印在出账组件）。`crm/opportunity`（只经事件，不声明依赖：订阅它的请求报价，它订阅本组件的报价、订单与拒绝请求的事件）。以后：`erp/tax`、`erp/contract`、`erp/finance`（款到发货）、`crm/customer`（只经事件）、`infra/workflow`（审批）、物流承运与电商平台的成员。
 
 ## 实现状态
+
+3.0.51（C6 的一致性考试之后）：`BRICKKIT.md` 补写商机的请求报价（订阅、草稿、拒绝的事实、报价与订单的商机参考）；QR04 写明格式不对的请求也按 `NOT_ELIGIBLE` 拒绝；行为不变。
 
 3.0.50（装配项目阶段计划 C6 的 P2b）：商机的请求报价（QR01–QR05）：订阅、去重、草稿与拒绝的事实；报价与订单带商机参考（契约 `contract/v3.0.0-alpha.4`）。
 
