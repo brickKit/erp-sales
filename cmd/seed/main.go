@@ -104,13 +104,14 @@ func segment(resource, op string, legalEntities, departments []string) sdkauthz.
 	return s
 }
 
-// salesWork is what a salesperson does: quotations, orders and deliveries, reading price lists.
+// salesWork is what a salesperson does: quotations, orders, deliveries and the customers' returns, reading price lists.
 func salesWork(les, depts []string) []sdkauthz.Segment {
 	var out []sdkauthz.Segment
 	for _, op := range [][2]string{{"erp.sales.quotation", "erp.sales.quotation.read"}, {"erp.sales.quotation", "erp.sales.quotation.edit"},
 		{"erp.sales.order", "erp.sales.order.read"}, {"erp.sales.order", "erp.sales.order.edit"},
 		{"erp.sales.order", "erp.sales.order.confirm"}, {"erp.sales.order", "erp.sales.order.cancel"},
 		{"erp.sales.delivery", "erp.sales.delivery.read"}, {"erp.sales.delivery", "erp.sales.delivery.create"},
+		{"erp.sales.return", "erp.sales.return.read"}, {"erp.sales.return", "erp.sales.return.edit"},
 		{"erp.sales.price_list", "erp.sales.price_list.read"}} {
 		out = append(out, segment(op[0], op[1], les, depts))
 	}
