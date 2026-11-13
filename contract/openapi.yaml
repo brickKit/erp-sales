@@ -216,7 +216,7 @@ paths:
       responses:
         '202':
           description: 'history=true past the limit: an export of the whole answer; its status at
-            /be/tiering/erp.sales.orders/exports/{export} (the requester only)'
+            /api/sales/tiering/erp.sales.orders/exports/{export} (the requester only)'
           content:
             application/json:
               schema:
